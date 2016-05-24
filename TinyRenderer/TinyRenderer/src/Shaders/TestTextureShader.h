@@ -5,25 +5,6 @@
 
 #include <algorithm>
 
-struct In
-{
-	Vec3f position;
-	Vec3f normal;
-	Vec2f texture;
-	Vec3i color;
-
-	In(Vec3f position, Vec3f normal, Vec3i color, Vec2f texture) :
-		position(position), normal(normal), color(color), texture(texture) {}
-};
-
-struct VSOut
-{
-	Vec4f position;
-	Vec4f normal;
-	Vec2f texture;
-	Vec3f color;
-};
-
 struct TestUniform
 {
 	Mat4f projection;
@@ -47,101 +28,136 @@ struct TestUniform
 	}
 };
 
+struct VSIn
+{
+	Vec2f texture;
+};
+
+struct VSOut
+{
+	Vec2f texture;
+};
 
 struct FSIn
 {
-	Eigen::Vector2i point_coord;
-	Eigen::Vector4f frag_coord;
-	Vec3f color;
-	Vec4f normal;
-	int prim_id;
-	bool front_facing;
-	float depth = (std::numeric_limits<float>::max)();
-	Vec3f interp_coord;
-
 	Mat2f derivatives;
 	Vec2f texture_coord;
-
 };
 
 struct FSOut
 {
-	Eigen::Vector4f color;
 };
 
 template <>
-VSOut Shader<TestUniform, In, VSOut, int, int, FSIn, FSOut>::vertex_shader(In const & indata)
+Wrapper<VSOutHeader, VSOut> Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut>::vertex_shader(Wrapper<VSInHeader, VSIn> const & indata)
 {
-	VSOut res;
+	Wrapper<VSOutHeader, VSOut> res;
 
-	res.position.x() = indata.position.x();
-	res.position.y() = indata.position.y();
-	res.position.z() = indata.position.z();
-	res.position.w() = 1.0f;
-	res.position = m_uniform.projection * m_uniform.view * m_uniform.model * res.position;
+	res.header.position.x() = indata.header.position.x();
+	res.header.position.y() = indata.header.position.y();
+	res.header.position.z() = indata.header.position.z();
+	res.header.position.w() = 1.0f;
+	res.header.position = m_uniform.projection * m_uniform.view * m_uniform.model * res.header.position;
 
-	//res.normal.x() = indata.normal.x();
-	//res.normal.y() = indata.normal.y();
-	//res.normal.z() = indata.normal.z();
-	//res.normal.w() = 1.0f;
-	//res.normal = m_uniform.model_i_t * res.normal;
-
-	//res.color.x() = indata.color.x() / 256.0f;
-	//res.color.y() = indata.color.y() / 256.0f;
-	//res.color.z() = indata.color.z() / 256.0f;
-
-	res.texture = indata.texture;
+	res.content.texture = indata.content.texture;
 
 	return (std::move)(res);
 }
 
 template <>
-FSOut Shader<TestUniform, In, VSOut, int, int, FSIn, FSOut>::fragment_shader(FSIn const & indata)
+Wrapper<FSOutHeader, FSOut> Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut>::fragment_shader(Wrapper<FSInHeader, FSIn> const & indata)
 {
-	FSOut res;
+	Wrapper<FSOutHeader, FSOut> res;
 
-	////IUINT32 color = m_uniform.texture.sample(indata.texture_coord.x(), indata.texture_coord.y());
+	Vec2f duv_dx = indata.content.derivatives.block<2, 1>(0, 0);
+	Vec2f duv_dy = indata.content.derivatives.block<2, 1>(0, 1);
+	float delta_max = (std::sqrt)((std::max)(duv_dx.squaredNorm(), duv_dy.squaredNorm()));
 
-	//// Ambient
-	//float ambientStrength = 0.2f;
-	//Vec3f ambient = ambientStrength * m_uniform.light_color;
-
-	//// Diffuse 
-	//Vec3f normal(indata.normal.x(), indata.normal.y(), indata.normal.z());
-	//normal.normalize();
-	//Vec3f pos;
-	//pos << indata.frag_coord.x(), indata.frag_coord.y(), indata.frag_coord.z();
-	//Vec3f light_dir = (m_uniform.light_pos - pos).normalized();
-	//float diff = (std::max)(float(normal.transpose() * light_dir), 0.0f);
-	//Vec3f diffuse = diff * m_uniform.light_color;
-
-	//// Specular
-	//float specularStrength = 0.8f;
-	//Vec3f view_dir = (m_uniform.view_pos - pos);
-	//Vec3f h_dir = (view_dir.normalized() + light_dir).normalized();
-	//float spec = (std::pow)((std::max)(float(h_dir.transpose() * normal), 0.0f), 32);
-	//Vec3f specular = specularStrength * spec * m_uniform.light_color;
-
-	//Vec3f total = ambient + diffuse + specular;
-
-	Vec2f duv_dx = indata.derivatives.block<2, 1>(0, 0);
-	Vec2f duv_dy = indata.derivatives.block<2, 1>(0, 1);
-	float delta_max_sqr = (std::max)(duv_dx.squaredNorm(), duv_dy.squaredNorm());
-	float temp = (std::sqrt)(delta_max_sqr);
 	// color
-	IUINT32 color = m_uniform.texture.sample(indata.texture_coord.x(), indata.texture_coord.y(), temp);
-	//IUINT32 color = m_uniform.texture.sample_bilinear_no_mipmap(indata.texture_coord.x(), indata.texture_coord.y());
-	//color << total.x() * indata.color.x(), total.y() * indata.color.y(), total.z() * indata.color.z();
-	//color = indata.color;
-	
-	res.color.x() = (std::min)(((color & 0xff0000) >> 16) / 256.0f, 1.0f);
-	res.color.y() = (std::min)(((color & 0xff00) >> 8) / 256.0f, 1.0f);
-	res.color.z() = (std::min)((color & 0xff) / 256.0f, 1.0f);
-	res.color.w() = 1.0f;
+	IUINT32 color = m_uniform.texture.sample(indata.content.texture_coord.x(), indata.content.texture_coord.y(), delta_max);
+
+	res.header.color.x() = (std::min)(((color & 0xff0000) >> 16) / 256.0f, 1.0f);
+	res.header.color.y() = (std::min)(((color & 0xff00) >> 8) / 256.0f, 1.0f);
+	res.header.color.z() = (std::min)((color & 0xff) / 256.0f, 1.0f);
+	res.header.color.w() = 1.0f;
 
 	return (std::move)(res);
 }
 
-typedef Shader<TestUniform, In, VSOut, int, int, FSIn, FSOut> TestShader;
+typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
+
+std::pair<TestShader, std::vector<Wrapper<VSInHeader, VSIn> > > input_assembly_stage()
+{
+	static float time = 0.0f;
+	time += 0.03f;
+
+	// abs
+	float n = 1.0f;
+	float f = 1000.0f;
+	float r = 1.0f;
+	float t = 1.0f;
+
+	Buffer2D<IUINT32> texture_buffer(256, 256);
+	for (int x = 0; x < 256; ++x) for (int y = 0; y < 256; ++y)
+	{
+		if (x / 16 % 2 == 0 ^ y / 16 % 2 == 0)
+			texture_buffer.coeff_ref(x, y) = (10U << 16) | (10U << 8) | 10U;
+		else
+			texture_buffer.coeff_ref(x, y) = (200U << 16) | (200U << 8) | 200U;
+	}
+	Texture2D texture(256, 256);
+	texture.set_content(std::move(texture_buffer));
+
+	auto & rot3 = rotate_matrix(Vec3f(1.0f, 1.0f, 1.0f), time);
+	Mat4f rot4 = Mat4f::Identity();
+	rot4.block<3, 3>(0, 0) = rot3;
+	Mat4f model;
+	model <<
+		70.0f, 0.0f, 0.0f, 0.0f,
+		0.0f, 70.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 70.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f;
+	model = rot4 * model;
+
+	Mat4f view;
+	view <<
+		1.0f, 0.0f, 0.0f, 0.0f,
+		0.0f, 1.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f, -500.0f,
+		0.0f, 0.0f, 0.0f, 1.0f;
+	Mat4f projection;
+	projection <<
+		n / r, 0.0f, 0.0f, 0.0f,
+		0.0f, n / t, 0.0f, 0.0f,
+		0.0f, 0.0f, -(f + n) / (f - n), -2 * (f * n) / (f - n),
+		0.0f, 0.0f, -1.0f, 0.0f;
+
+	TestUniform uniform(projection, view, model, texture);
+
+	float positions[4][3] = {
+		{ -1.0f, -1.0f, -1.0f },
+		{ -1.0f, -1.0f, 1.0f },
+		{ 1.0f, -1.0f, 1.0f },
+		{ 1.0f, -1.0f, -1.0f } };
+
+	float uvs[4][2] = {
+		{ 0.0f, 0.0f },
+		{ 0.0f, 1.0f },
+		{ 1.0f, 1.0f },
+		{ 1.0f, 0.0f } };
+
+	std::vector<Wrapper<VSInHeader, VSIn> > vertices;
+	for (int i = 0; i < 4; ++i)
+	{
+		Wrapper<VSInHeader, VSIn> vsin(VSInHeader(Vec3f(positions[i][0], positions[i][1], positions[i][2])));
+		vsin.content.texture = Vec2f(uvs[i][0], uvs[i][1]);
+		vertices.push_back(std::move(vsin));
+	}
+
+	TestShader shader(uniform, false);
+
+	return std::pair<TestShader, std::vector<Wrapper<VSInHeader, VSIn> > >(std::move(shader), std::move(vertices));
+
+}
 
 #endif

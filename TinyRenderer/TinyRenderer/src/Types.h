@@ -7,18 +7,38 @@
 #include <functional>
 
 ///////////////////////////////
-// types
+// basic types
 ///////////////////////////////
 
 typedef unsigned int IUINT32;
 
 typedef Eigen::Vector2i Vec2i;
 typedef Eigen::Vector2f Vec2f;
-typedef Eigen::Vector3f Vec3f;
+typedef Eigen::Vector2d Vec2d;
+
 typedef Eigen::Vector3i Vec3i;
+typedef Eigen::Vector3f Vec3f;
+typedef Eigen::Vector3d Vec3d;
+
+typedef Eigen::Vector4i Vec4i;
 typedef Eigen::Vector4f Vec4f;
+typedef Eigen::Vector4d Vec4d;
+
+typedef Eigen::Matrix2i Mat2i;
 typedef Eigen::Matrix2f Mat2f;
+typedef Eigen::Matrix2d Mat2d;
+
+typedef Eigen::Matrix3i Mat3i;
+typedef Eigen::Matrix3f Mat3f;
+typedef Eigen::Matrix3d Mat3d;
+
+typedef Eigen::Matrix4i Mat4i;
 typedef Eigen::Matrix4f Mat4f;
+typedef Eigen::Matrix4d Mat4d;
+
+///////////////////////////////
+// enumerates
+///////////////////////////////
 
 enum class FragmentTriangleTestResult 
 { FRONT, BACK, OUTSIDE, INSIDE };
@@ -30,7 +50,7 @@ enum class QuadFragType
 { HELPER_DEPTH_TEST_FAILED, HELPER_OUT_OF_RANGE, RENDER };
 
 ///////////////////////////////
-// math
+// math operators
 ///////////////////////////////
 inline int random_int(int min, int max)
 {
@@ -56,7 +76,7 @@ inline Type bound(Type p, Type min, Type max)
 	return p;
 }
 
-Eigen::Matrix3f rotate_matrix(Vec3f axis, float theta)
+inline Eigen::Matrix3f rotate_matrix(Vec3f axis, float theta)
 {
 	float h = theta / 2.0f;
 	Eigen::Quaternionf q;
@@ -66,9 +86,56 @@ Eigen::Matrix3f rotate_matrix(Vec3f axis, float theta)
 	return q.toRotationMatrix();
 }
 
+inline float edge_function(int ax, int ay, int bx, int by, int cx, int cy)
+{
+	return (cy - ay) * (bx - ax) - (cx - ax) * (by - ay);
+}
+
 ///////////////////////////////
 // shader prototypes
 ///////////////////////////////
+template <typename Header, typename Content>
+class Wrapper
+{
+public:
+	Header header;
+	Content content;
+
+	Wrapper() = default;
+
+	Wrapper(Header && header) :
+		header(header), content() {}
+
+	Wrapper(Header && header, Content && content) :
+		header(header), content(content) {}
+};
+
+struct VSInHeader
+{
+	Vec3f position;
+	VSInHeader(Vec3f position) :
+		position(position) {}
+};
+
+struct VSOutHeader
+{
+	Vec4f position;
+};
+
+struct FSInHeader
+{
+	int prim_id;
+	Vec2i point_coord;
+	Vec4f frag_coord;
+	float depth = (std::numeric_limits<float>::max)();
+	Vec3f interp_coord;
+};
+
+struct FSOutHeader
+{
+	Eigen::Vector4f color;
+};
+
 template <typename Uniform,
 	typename VSIn, typename VSOut,
 	typename GSIn, typename GSOut,
@@ -79,9 +146,9 @@ public:
 	Shader(Uniform const & uniform, bool use_gs = false) :
 		m_uniform(uniform), m_use_gs(use_gs) {}
 
-	VSOut vertex_shader(VSIn const & in);
-	GSOut geometry_shader(GSIn const & in);
-	FSOut fragment_shader(FSIn const & in);
+	Wrapper<VSOutHeader, VSOut> vertex_shader(Wrapper<VSInHeader, VSIn> const & in);
+	//GSOut geometry_shader(GSIn const & in);
+	Wrapper<FSOutHeader, FSOut> fragment_shader(Wrapper<FSInHeader, FSIn> const & in);
 
 private:
 	Uniform m_uniform;
@@ -105,6 +172,7 @@ struct Primitive
 /////////////////////////////////
 // buffers
 /////////////////////////////////
+
 template <typename Type>
 class Buffer2D
 {
