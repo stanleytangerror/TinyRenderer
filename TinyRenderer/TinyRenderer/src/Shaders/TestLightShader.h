@@ -1,7 +1,7 @@
 #ifndef TEST_LIGHT_SHADER_H
 #define TEST_LIGHT_SHADER_H
 
-#include "Types.h"
+#include "..\\Types.h"
 
 #include <algorithm>
 

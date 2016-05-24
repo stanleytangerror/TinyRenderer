@@ -1,7 +1,7 @@
 #ifndef TEST_TEXTURE_SHADER_H
 #define TEST_TEXTURE_SHADER_H
 
-#include "Types.h"
+#include "..\\Types.h"
 
 #include <algorithm>
 
