@@ -124,7 +124,7 @@ struct VSOutHeader
 
 struct FSInHeader
 {
-	int prim_id;
+	int prim_id = -1;
 	Vec2i point_coord;
 	Vec4f frag_coord;
 	float depth = (std::numeric_limits<float>::max)();
@@ -149,6 +149,10 @@ public:
 	Wrapper<VSOutHeader, VSOut> vertex_shader(Wrapper<VSInHeader, VSIn> const & in);
 	//GSOut geometry_shader(GSIn const & in);
 	Wrapper<FSOutHeader, FSOut> fragment_shader(Wrapper<FSInHeader, FSIn> const & in);
+
+	void interpolate(FSIn & fsin, float w, VSOut const & vsout0, VSOut const & vsout1, VSOut const & vsout2, Vec3f const & coordinate);
+
+	void quad_derivative(FSIn & fsin0, FSIn & fsin1, FSIn & fsin2, FSIn & fsin3);
 
 private:
 	Uniform m_uniform;
@@ -278,47 +282,48 @@ public:
 		if (height != 1) m_with_mipmap = false;
 		if (m_with_mipmap)
 		{
-			m_level = (m_width >= m_height) ? w_level : h_level;
-			m_mipmap.reserve(m_level);
+			m_level = ((m_width >= m_height) ? w_level : h_level);
+			m_pyramid.reserve(m_level);
+			m_raw_pixel_size = ((m_width >= m_height) ? (1.0f / float(m_width)) : (1.0f / float(m_height)));
 		}
 	}
 
 	void set_content(Buffer2D<IUINT32> && buffer)
 	{
-		m_mipmap.push_back(buffer);
+		m_pyramid.push_back(buffer);
 		if (!m_with_mipmap) return;
 
 		for (int level_no = 1; level_no < m_level; ++level_no)
 		{
-			Buffer2D<IUINT32> & parent = m_mipmap[level_no - 1];
+			Buffer2D<IUINT32> & parent = m_pyramid[level_no - 1];
 			Buffer2D<IUINT32> new_buffer(parent.m_width >> 1, parent.m_height >> 1);
 			for (unsigned int x = 0; x < new_buffer.m_width; ++x) for (unsigned int y = 0; y < new_buffer.m_height; ++y)
 			{
 				new_buffer.coeff_ref(x, y) = (parent.coeff(x << 1, y << 1) + parent.coeff((x << 1) + 1, y << 1) +
 					parent.coeff(x << 1, (y << 1) + 1) + parent.coeff((x << 1) + 1, (y << 1) + 1)) >> 2;
 			}
-			m_mipmap.push_back(std::move(new_buffer));
+			m_pyramid.push_back(std::move(new_buffer));
 		}
 	}
 
 	IUINT32 sample(float x, float y, float pixel_len)
 	{
 		if (!m_with_mipmap || pixel_len >= 1.0f)
-			return IUINT32(sample_bilinear(m_mipmap[0], x, y));
+			return IUINT32(sample_bilinear(m_pyramid[0], x, y));
 			
-		float len = 1.0f / (std::pow)(2.0f, m_level);
+		float len = m_raw_pixel_size;
 		int level_no = 0;
-		while (len <= pixel_len && level_no < m_level)
+		while (pixel_len >= len && level_no < m_level)
 		{
 			len *= 2.0f;
 			level_no += 1;
 		}
 		if (level_no == m_level)
-			return sample_bilinear(m_mipmap[m_level - 1], x, y);
+			return sample_bilinear(m_pyramid[m_level - 1], x, y);
 
 		float t = interpolation(pixel_len, len / 2.0f, len);
-		IUINT32 val_floor = sample_bilinear(m_mipmap[level_no - 1], x, y);
-		IUINT32 val_ceil = sample_bilinear(m_mipmap[level_no], x, y);
+		IUINT32 val_floor = sample_bilinear(m_pyramid[level_no - 1], x, y);
+		IUINT32 val_ceil = sample_bilinear(m_pyramid[level_no], x, y);
 		
 		unsigned int r = unsigned int(float((val_floor & 0xff0000) >> 16) * t + float((val_ceil & 0xff0000) >> 16) * (1 - t));
 		unsigned int g = unsigned int(float((val_floor & 0xff00) >> 8) * t + float((val_ceil & 0xff00) >> 8) * (1 - t));
@@ -330,20 +335,21 @@ public:
 
 	IUINT32 sample_bilinear_no_mipmap(float x, float y)
 	{
-		return IUINT32(sample_bilinear(m_mipmap[0], x, y));
+		return IUINT32(sample_bilinear(m_pyramid[0], x, y));
 	}
 
 	IUINT32 sample_nearest_no_mipmap(float x, float y)
 	{
-		return sample_nearest(m_mipmap[0], x, y);
+		return sample_nearest(m_pyramid[0], x, y);
 	}
 
 private:
 	int m_width, m_height;
 	
 	bool m_with_mipmap;
-	std::vector<Buffer2D<IUINT32> > m_mipmap;
+	std::vector<Buffer2D<IUINT32> > m_pyramid;
 	int m_level;
+	float m_raw_pixel_size;
 
 	IUINT32 sample_bilinear(Buffer2D<IUINT32> const & texture, float x, float y)
 	{

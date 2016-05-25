@@ -5,6 +5,13 @@
 
 #include <algorithm>
 
+struct TestUniform;
+struct VSIn;
+struct VSOut;
+struct FSIn;
+struct FSOut;
+typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
+
 struct TestUniform
 {
 	Mat4f projection;
@@ -65,7 +72,7 @@ Wrapper<VSOutHeader, VSOut> Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSO
 }
 
 template <>
-Wrapper<FSOutHeader, FSOut> Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut>::fragment_shader(Wrapper<FSInHeader, FSIn> const & indata)
+Wrapper<FSOutHeader, FSOut> TestShader::fragment_shader(Wrapper<FSInHeader, FSIn> const & indata)
 {
 	Wrapper<FSOutHeader, FSOut> res;
 
@@ -84,7 +91,6 @@ Wrapper<FSOutHeader, FSOut> Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSO
 	return (std::move)(res);
 }
 
-typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
 
 std::pair<TestShader, std::vector<Wrapper<VSInHeader, VSIn> > > input_assembly_stage()
 {
@@ -159,5 +165,26 @@ std::pair<TestShader, std::vector<Wrapper<VSInHeader, VSIn> > > input_assembly_s
 	return std::pair<TestShader, std::vector<Wrapper<VSInHeader, VSIn> > >(std::move(shader), std::move(vertices));
 
 }
+
+
+void TestShader::interpolate(FSIn & fsin, float w, VSOut const & vsout0, VSOut const & vsout1, VSOut const & vsout2, Vec3f const & coordinate)
+{
+	fsin.texture_coord = w * (coordinate.x() * vsout0.texture + 
+		coordinate.y() * vsout1.texture + coordinate.z() * vsout2.texture);
+}
+
+void TestShader::quad_derivative(FSIn & fsin0, FSIn & fsin1, FSIn & fsin2, FSIn & fsin3)
+{
+	Mat2f uv_derivatives;
+	uv_derivatives.block<2, 1>(0, 0) =
+		(-fsin0.texture_coord + fsin1.texture_coord - fsin2.texture_coord + fsin3.texture_coord) / 2.0f;
+	uv_derivatives.block<2, 1>(0, 1) =
+		(-fsin0.texture_coord - fsin1.texture_coord + fsin2.texture_coord + fsin3.texture_coord) / 2.0f;
+	fsin0.derivatives = uv_derivatives;
+	fsin1.derivatives = uv_derivatives;
+	fsin2.derivatives = uv_derivatives;
+	fsin3.derivatives = uv_derivatives;
+}
+
 
 #endif

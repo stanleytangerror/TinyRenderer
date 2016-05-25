@@ -483,15 +483,15 @@ QuadFragType quad_fragment_barycoord_correction_and_depth_test(
 
 	depth = 1.0f / inv_depth;
 
-	/* depth test failed, skip this fragment */
+	/* depth test */
 	if (fs_ins.coeff_ref(x, y).header.prim_id >= 0 && depth >= fs_ins.coeff_ref(x, y).header.depth)
 		return QuadFragType::HELPER_DEPTH_TEST_FAILED;
 
 	return QuadFragType::RENDER;
 }
 
-template <typename VSOut, typename FSIn>
-void rasterize_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
+template <typename Shader, typename VSOut, typename FSIn>
+void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
 	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, std::vector<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
 {
@@ -573,15 +573,27 @@ void rasterize_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
 		auto & p1 = vsout[prim.p1];
 		auto & p2 = vsout[prim.p2];
 
-		int minx = (std::max)(0, (int)(std::min)(p0.header.position.x(), (std::min)(p1.header.position.x(), p2.header.position.x())));
-		int miny = (std::max)(0, (int)(std::min)(p0.header.position.y(), (std::min)(p1.header.position.y(), p2.header.position.y())));
-		int maxx = (std::min)(w - 1, (int)(std::max)(p0.header.position.x(), (std::max)(p1.header.position.x(), p2.header.position.x())));
-		int maxy = (std::min)(h - 1, (int)(std::max)(p0.header.position.y(), (std::max)(p1.header.position.y(), p2.header.position.y())));
+		int minx = (std::min)({ 
+			(std::floor)(p0.header.position.x()),
+			(std::floor)(p1.header.position.x()),
+			(std::floor)(p2.header.position.x()) });
+		int miny = (std::min)({
+			(std::floor)(p0.header.position.y()),
+			(std::floor)(p1.header.position.y()),
+			(std::floor)(p2.header.position.y()) });
+		int maxx = (std::max)({
+			(std::ceil)(p0.header.position.x()),
+			(std::ceil)(p1.header.position.x()),
+			(std::ceil)(p2.header.position.x()) });
+		int maxy = (std::max)({
+			(std::ceil)(p0.header.position.y()),
+			(std::ceil)(p1.header.position.y()),
+			(std::ceil)(p2.header.position.y()) });
 
-		if (minx % 2 != 0) minx = (std::max)(0, minx - 1);
-		if (miny % 2 != 0) miny = (std::max)(0, miny - 1);
-		if (maxx % 2 != 0) maxx = (std::min)(w - 1, maxx + 1);
-		if (maxy % 2 != 0) maxy = (std::min)(h - 1, maxy + 1);
+		minx = (std::max)(0, (minx % 2 == 0) ? minx : (minx - 1));
+		miny = (std::max)(0, (miny % 2 == 0) ? miny : (miny - 1));
+		maxx = (std::min)(w - 2, (maxx % 2 == 0) ? maxx : (maxx + 1));
+		maxy = (std::min)(h - 2, (maxy % 2 == 0) ? maxy : (maxy + 1));
 
 		/* dealing with each quad */
 		for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
@@ -596,60 +608,68 @@ void rasterize_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
 				int y = qy + quad_offsets[_i].second;
 				quad_masks[_i] = quad_fragment_rasterize<VSOut>(vsout, primitives, prim_id, culling,
 					x, y, quad_test_results[_i], barycentric_coordinates[_i]);
+				/* quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} */
 				if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
+				if (quad_masks[_i] == QuadFragType::RENDER)
+					buffer.coeff_ref(x, y) = 255 << 16;
 			}
 			if (!valid) continue;
 
 			/* second phase
-			* correct the barycentric coordinates and run depth test
-			*/
+			 * correct the barycentric coordinates and run depth test
+			 */
 			valid = false;
 			for (int _i = 0; _i < 4; ++_i)
 			{
 				int x = qx + quad_offsets[_i].first;
 				int y = qy + quad_offsets[_i].second;
-				quad_masks[_i] = quad_fragment_barycoord_correction_and_depth_test(fs_ins, vsout, primitives, prim_id,
+				QuadFragType mask = quad_fragment_barycoord_correction_and_depth_test(fs_ins, vsout, primitives, prim_id,
 					x, y, quad_test_results[_i], barycentric_coordinates[_i], depthes[_i]);
+				/* mask = {RENDER, HELPER_DEPTH_TEST_FAILED} 
+				 * quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} 
+				 */
+				quad_masks[_i] = (mask == QuadFragType::RENDER) ? quad_masks[_i] : mask;
 				if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
 			}
 			if (!valid) continue;
 
-
 			/* third phase
-			 * get derivatives of texture coordinates (with helper fargment) 
-			 */
+			* get texture coordinates and their derivatives (with helper fargment)
+			*/
 			for (int _i = 0; _i < 4; ++_i)
 			{
-				textures_coordinates[_i] = (barycentric_coordinates[_i].x() * p0.content.texture +
-					barycentric_coordinates[_i].y() * p1.content.texture +
-					barycentric_coordinates[_i].z() * p2.content.texture) * depthes[_i];
+				int x = qx + quad_offsets[_i].first;
+				int y = qy + quad_offsets[_i].second;
+				shader.interpolate(fs_ins.coeff_ref(x, y).content, depthes[_i],
+					p0.content, p1.content, p2.content, barycentric_coordinates[_i]);
 			}
-			uv_derivatives.block<2, 1>(0, 0) =
-				(-textures_coordinates[0] + textures_coordinates[1] - textures_coordinates[2] + textures_coordinates[3]) / 2.0f;
-			uv_derivatives.block<2, 1>(0, 1) =
-				(-textures_coordinates[0] - textures_coordinates[1] + textures_coordinates[2] + textures_coordinates[3]) / 2.0f;
 
+			shader.quad_derivative(fs_ins.coeff_ref(qx, qy).content, fs_ins.coeff_ref(qx + 1, qy).content,
+				fs_ins.coeff_ref(qx, qy + 1).content, fs_ins.coeff_ref(qx + 1, qy + 1).content);
+			
 			/* fourth phase
-			 * construct input of fragment shaders 
+			 * construct header of fragment shaders 
 			 */
 			for (int _i = 0; _i < 4; ++_i)
 			{
 				int x = qx + quad_offsets[_i].first;
 				int y = qy + quad_offsets[_i].second;
 
-				if (quad_masks[_i] != QuadFragType::RENDER)
-					continue;
-				
 				auto & fsin = fs_ins.coeff_ref(x, y);
+
+				if (quad_masks[_i] != QuadFragType::RENDER)
+				{
+					//fsin.header.prim_id = -1;
+					continue;
+				}
+				
 				fsin.header.prim_id = prim_id;
 				fsin.header.point_coord << x, y;
 				fsin.header.depth = depthes[_i];
 				fsin.header.interp_coord = barycentric_coordinates[_i];
 
-				fsin.content.texture_coord = textures_coordinates[_i];
-				fsin.content.derivatives = uv_derivatives;
-
 			}
+
 		}
 	}
 
@@ -731,7 +751,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 		primitives.push_back((std::move)(prim));
 	}
 
-	rasterize_stage<VSOut, FSIn>(buffer, fsbuffer, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
+	rasterize_stage<TestShader, VSOut, FSIn>(shader, buffer, fsbuffer, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
 	fragment_shader_stage<TestShader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, vsdata.first);
 
 }
