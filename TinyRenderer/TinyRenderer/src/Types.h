@@ -2,6 +2,7 @@
 #define TYPES_H
 
 #include <Eigen\Dense>
+#include <Eigen\StdVector>
 #include <vector>
 #include <memory>
 #include <functional>
@@ -11,31 +12,37 @@
 // basic types
 ///////////////////////////////
 
-typedef unsigned int IUINT32;
+using IUINT32 = unsigned int;
 
-typedef Eigen::Vector2i Vec2i;
-typedef Eigen::Vector2f Vec2f;
-typedef Eigen::Vector2d Vec2d;
+using Vec2i = Eigen::Vector2i;
+using Vec2f = Eigen::Vector2f;
+using Vec2d = Eigen::Vector2d;
 
-typedef Eigen::Vector3i Vec3i;
-typedef Eigen::Vector3f Vec3f;
-typedef Eigen::Vector3d Vec3d;
+using Vec3i = Eigen::Vector3i;
+using Vec3f = Eigen::Vector3f;
+using Vec3d = Eigen::Vector3d;
 
-typedef Eigen::Vector4i Vec4i;
-typedef Eigen::Vector4f Vec4f;
-typedef Eigen::Vector4d Vec4d;
+using Vec4i = Eigen::Vector4i;
+using Vec4f = Eigen::Vector4f;
+using Vec4d = Eigen::Vector4d;
 
-typedef Eigen::Matrix2i Mat2i;
-typedef Eigen::Matrix2f Mat2f;
-typedef Eigen::Matrix2d Mat2d;
+using Mat2i = Eigen::Matrix2i;
+using Mat2f = Eigen::Matrix2f;
+using Mat2d = Eigen::Matrix2d;
 
-typedef Eigen::Matrix3i Mat3i;
-typedef Eigen::Matrix3f Mat3f;
-typedef Eigen::Matrix3d Mat3d;
+using Mat3i = Eigen::Matrix3i;
+using Mat3f = Eigen::Matrix3f;
+using Mat3d = Eigen::Matrix3d;
 
-typedef Eigen::Matrix4i Mat4i;
-typedef Eigen::Matrix4f Mat4f;
-typedef Eigen::Matrix4d Mat4d;
+using Mat4i = Eigen::Matrix4i;
+using Mat4f = Eigen::Matrix4f;
+using Mat4d = Eigen::Matrix4d;
+
+/* NOTE: according to https://eigen.tuxfamily.org/dox/group__TopicStlContainers.html
+ * use stl containers with eigen
+ */
+template <typename T>
+using vector_with_eigen = std::vector<T, Eigen::aligned_allocator<T> >;
 
 ///////////////////////////////
 // enumerates
@@ -109,6 +116,8 @@ public:
 
 	Wrapper(Header && header, Content && content) :
 		header(header), content(content) {}
+
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 struct VSInHeader
@@ -116,11 +125,13 @@ struct VSInHeader
 	Vec3f position;
 	VSInHeader(Vec3f position) :
 		position(position) {}
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 struct VSOutHeader
 {
 	Vec4f position;
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 struct FSInHeader
@@ -130,11 +141,13 @@ struct FSInHeader
 	Vec4f frag_coord;
 	float depth = (std::numeric_limits<float>::max)();
 	Vec3f interp_coord;
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 struct FSOutHeader
 {
 	Eigen::Vector4f color;
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 template <typename Uniform,
@@ -158,6 +171,7 @@ public:
 private:
 	Uniform m_uniform;
 	bool m_use_gs;
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 };
 
@@ -166,20 +180,20 @@ template <typename VertexType> struct Primitive;
 template <typename Shader, typename VSIn>
 struct input_assembly_stage
 {
-	std::tuple<Shader, std::vector<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ();
+	std::tuple<Shader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ();
 };
 
 //////////////////////////////////
 // primitives
 //////////////////////////////////
-template <typename VertexType>
+template <typename IndexType>
 struct Primitive
 {
 	enum class Type { POINT, LINE, TRIANGLE } type;
 	enum class DrawMode { POINT, LINE, TRIANGLE } draw_mode;
-	VertexType p0;
-	VertexType p1;
-	VertexType p2;
+	IndexType p0;
+	IndexType p1;
+	IndexType p2;
 
 	Primitive() = default;
 	Primitive(Primitive &&) = default;
@@ -257,6 +271,8 @@ public:
 	}
 
 	int const m_width, m_height;
+
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 private:
 	std::unique_ptr< Type * []> m_buffer;
@@ -362,7 +378,7 @@ private:
 	int m_width, m_height;
 	
 	bool m_with_mipmap;
-	std::vector<Buffer2D<IUINT32> > m_pyramid;
+	vector_with_eigen<Buffer2D<IUINT32> > m_pyramid;
 	int m_level;
 	float m_raw_pixel_size;
 

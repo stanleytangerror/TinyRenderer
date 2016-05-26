@@ -1,8 +1,8 @@
 #define USE_MY_MINI3D
 #ifdef USE_MY_MINI3D
 
-//#include "Shaders\\TestLightShader.h"
-#include "Shaders\\TestTextureShader.h"
+#include "Shaders\\TestLightShader.h"
+//#include "Shaders\\TestTextureShader.h"
 #include "Types.h"
 
 #include <Eigen\Dense>
@@ -397,9 +397,9 @@ void flush_buffer(device_t & device, Buffer2D<IUINT32> & buffer)
 }
 
 template <typename Shader, typename VSIn, typename VSOut>
-std::vector<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(std::vector<Wrapper<VSInHeader, VSIn>> & vertices, Shader & shader)
+vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(vector_with_eigen<Wrapper<VSInHeader, VSIn>> & vertices, Shader & shader)
 {
-	std::vector<Wrapper<VSOutHeader, VSOut>> vsout;
+	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vsout;
 	for (auto & v : vertices)
 	{
 		auto vso = shader.vertex_shader(v);
@@ -410,7 +410,7 @@ std::vector<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(std::vector<Wrapper
 
 template <typename VSOut>
 QuadFragType quad_fragment_rasterize(
-	std::vector<Wrapper<VSOutHeader, VSOut>> & vsout, 
+	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
 	std::vector<Primitive<int> > & primitives, int prim_id, 
 	FaceCulling culling, int x, int y, 
 	FragmentTriangleTestResult & res, Vec3f & barycentric_coordinate)
@@ -439,7 +439,7 @@ QuadFragType quad_fragment_rasterize(
 
 template <typename VSOut, typename FSIn>
 QuadFragType quad_fragment_barycoord_correction_and_depth_test(
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, std::vector<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
 	int prim_id, int x, int y, FragmentTriangleTestResult const & res, Vec3f & barycentric_coordinate, float & depth)
 {
 	auto & prim = primitives[prim_id];
@@ -474,7 +474,7 @@ QuadFragType quad_fragment_barycoord_correction_and_depth_test(
 
 template <typename Shader, typename VSOut, typename FSIn>
 void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, std::vector<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
 {
 
@@ -698,7 +698,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 
 	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
 	Shader & shader = std::get<0>(vsdata);
-	std::vector<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
+	vector_with_eigen<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
 	std::vector<Primitive<int> > & primitives = std::get<2>(vsdata);
 	
 	auto & vs_outs = vertex_shader_stage<Shader, VSIn, VSOut>(vs_ins, shader);

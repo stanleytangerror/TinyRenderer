@@ -16,6 +16,11 @@
 
 ![](.//images//mipmap.png)
 
+顶点平均化法线，Phong光照
+
+![](.//images//phong.png)
+
+
 致谢
 ===
 受[skywind3000](https://github.com/skywind3000)的许多启发
