@@ -557,8 +557,6 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	static FragmentTriangleTestResult quad_test_results[4];
 	static float depthes[4];
 	static QuadFragType quad_masks[4];
-	static Vec2f textures_coordinates[4];
-	static Mat2f uv_derivatives;
 
 	static std::pair<int, int> const quad_offsets[4] = { 
 		std::pair<int, int>(0, 0),
@@ -634,8 +632,8 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 			if (!valid) continue;
 
 			/* third phase
-			* get texture coordinates and their derivatives (with helper fargment)
-			*/
+			 * get texture coordinates and their derivatives (with helper fargment)
+			 */
 			for (int _i = 0; _i < 4; ++_i)
 			{
 				int x = qx + quad_offsets[_i].first;
@@ -706,6 +704,7 @@ void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<Wr
 	}
 }
 
+template <typename Shader, typename VSIn, typename VSOut, typename FSIn, typename FSOut>
 void pipeline(Buffer2D<IUINT32> & buffer)
 {
 	static float w = float(buffer.m_width);
@@ -729,30 +728,21 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 	//	{ 4, 5, 6 },
 	//	{ 4, 6, 7 } };
 	
-	int ebo[12][3] = {
-		{ 0, 2, 1 },
-		{ 2, 0, 3 } };
+	//int ebo[12][3] = {
+	//	{ 0, 2, 1 },
+	//	{ 2, 0, 3 } };
 
-	auto & vsdata = input_assembly_stage();
-	std::vector<Wrapper<VSInHeader, VSIn> > & vs_ins = vsdata.second;
-	TestShader & shader = vsdata.first;
-
-	auto & vs_outs = vertex_shader_stage<TestShader, VSIn, VSOut>(vs_ins, shader);
+	auto & vsdata = (input_assembly_stage<TestShader, VSIn>())();
+	Shader & shader = std::get<0>(vsdata);
+	std::vector<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
+	std::vector<Primitive<int> > & primitives = std::get<2>(vsdata);
+	
+	auto & vs_outs = vertex_shader_stage<Shader, VSIn, VSOut>(vs_ins, shader);
 
 	//auto & primitives = primitive_assembly_stage(ebo);
-	std::vector<Primitive<int> > primitives;
-	for (auto & es : ebo)
-	{
-		Primitive<int> prim;
-		prim.type = prim.TRIANGLE;
-		prim.p0 = es[0];
-		prim.p1 = es[1];
-		prim.p2 = es[2];
-		primitives.push_back((std::move)(prim));
-	}
 
-	rasterize_stage<TestShader, VSOut, FSIn>(shader, buffer, fsbuffer, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
-	fragment_shader_stage<TestShader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, vsdata.first);
+	rasterize_stage<Shader, VSOut, FSIn>(shader, buffer, fsbuffer, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
+	fragment_shader_stage<Shader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, shader);
 
 }
 
@@ -781,7 +771,7 @@ int main()
 		screen_dispatch();
 		device_clear(&device, 1);
 
-		pipeline(buffer);
+		pipeline<TestShader, VSIn, VSOut, FSIn, FSOut>(buffer);
 
 		flush_buffer(device, buffer);
 

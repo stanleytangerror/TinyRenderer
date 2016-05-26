@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <tuple>
 
 ///////////////////////////////
 // basic types
@@ -80,7 +81,7 @@ inline Eigen::Matrix3f rotate_matrix(Vec3f axis, float theta)
 {
 	float h = theta / 2.0f;
 	Eigen::Quaternionf q;
-	q.vec() = axis * (std::sin)(h);
+	q.vec() = axis.normalized() * (std::sin)(h);
 	q.w() = (std::cos)(h);
 	q.normalize();
 	return q.toRotationMatrix();
@@ -160,6 +161,14 @@ private:
 
 };
 
+template <typename VertexType> struct Primitive;
+
+template <typename Shader, typename VSIn>
+struct input_assembly_stage
+{
+	std::tuple<Shader, std::vector<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ();
+};
+
 //////////////////////////////////
 // primitives
 //////////////////////////////////
@@ -170,8 +179,12 @@ struct Primitive
 	VertexType p0;
 	VertexType p1;
 	VertexType p2;
-};
 
+	Primitive() = default;
+	Primitive(Primitive &&) = default;
+	Primitive(Primitive const &) = default;
+	Primitive & operator=(Primitive const &) = default;
+};
 
 /////////////////////////////////
 // buffers
