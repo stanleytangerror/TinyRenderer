@@ -408,24 +408,6 @@ std::vector<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(std::vector<Wrapper
 	return std::move(vsout);
 }
 
-std::vector<Primitive<int> > primitive_assembly_stage(std::vector<int[3]> const & ebo)
-{
-
-	std::cout << "primitive assembly " << std::endl;
-	std::vector<Primitive<int> > primitives;
-	for (auto & es : ebo)
-	{
-		Primitive<int> prim;
-		prim.type = prim.TRIANGLE;
-		prim.p0 = es[0];
-		prim.p1 = es[1];
-		prim.p2 = es[2];
-		primitives.push_back((std::move)(prim));
-	}
-
-	return std::move(primitives);
-}
-
 template <typename VSOut>
 QuadFragType quad_fragment_rasterize(
 	std::vector<Wrapper<VSOutHeader, VSOut>> & vsout, 
@@ -714,25 +696,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 
 	clear(buffer, fsbuffer, fs_ins);
 
-	//int ebo[12][3] = {
-	//	{ 0, 2, 1 },
-	//	{ 2, 0, 3 },
-	//	{ 0, 5, 4 },
-	//	{ 0, 1, 5 },
-	//	{ 5, 1, 2 },
-	//	{ 5, 2, 6 },
-	//	{ 6, 2, 3 },
-	//	{ 3, 7, 6 },
-	//	{ 4, 3, 0 },
-	//	{ 4, 7, 3 },
-	//	{ 4, 5, 6 },
-	//	{ 4, 6, 7 } };
-	
-	//int ebo[12][3] = {
-	//	{ 0, 2, 1 },
-	//	{ 2, 0, 3 } };
-
-	auto & vsdata = (input_assembly_stage<TestShader, VSIn>())();
+	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
 	Shader & shader = std::get<0>(vsdata);
 	std::vector<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
 	std::vector<Primitive<int> > & primitives = std::get<2>(vsdata);
@@ -755,13 +719,14 @@ int main()
 	float alpha = 1;
 	float pos = 3.5;
 
-	Buffer2D<IUINT32> buffer(600, 600);
+	int width = 640, height = 640;
+	Buffer2D<IUINT32> buffer(width, height);
 	buffer.clear(0);
 
-	if (screen_init(600, 600, _T("TinyRenderer")))
+	if (screen_init(width, height, _T("TinyRenderer")))
 		return -1;
 
-	device_init(&device, 600, 600, screen_fb);
+	device_init(&device, width, height, screen_fb);
 	//camera_at_zero(&device, 3, 0, 0);
 
 	//init_texture(&device);

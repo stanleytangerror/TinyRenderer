@@ -97,12 +97,12 @@ struct input_assembly_stage<TestShader, VSIn>
 {
 	std::tuple<TestShader, std::vector<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ()
 	{
-		static float time = 0.0f;
+		static float time = 0.4f;
 		time += 0.03f;
 
 		// abs
 		float n = 1.0f;
-		float f = 1000.0f;
+		float f = 300.0f;
 		float r = 1.0f;
 		float t = 1.0f;
 
@@ -132,7 +132,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		view <<
 			1.0f, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, -500.0f,
+			0.0f, 0.0f, 1.0f, -200.0f,
 			0.0f, 0.0f, 0.0f, 1.0f;
 		Mat4f projection;
 		projection <<
@@ -163,7 +163,7 @@ struct input_assembly_stage<TestShader, VSIn>
 			vertices.push_back(std::move(vsin));
 		}
 
-		int ebo[12][3] = {
+		int ebo[2][3] = {
 			{ 0, 2, 1 },
 			{ 2, 0, 3 } };
 
@@ -171,7 +171,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		for (auto & es : ebo)
 		{
 			Primitive<int> prim;
-			prim.type = prim.TRIANGLE;
+			prim.type = Primitive<int>::Type::TRIANGLE;
 			prim.p0 = es[0];
 			prim.p1 = es[1];
 			prim.p2 = es[2];
@@ -180,7 +180,7 @@ struct input_assembly_stage<TestShader, VSIn>
 
 		TestShader shader(uniform, false);
 
-		return std::make_tuple(std::move(shader), std::move(vertices), primitives);
+		return std::make_tuple(std::move(shader), std::move(vertices), std::move(primitives));
 
 	}
 };

@@ -247,7 +247,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		for (auto & es : ebo)
 		{
 			Primitive<int> prim;
-			prim.type = prim.TRIANGLE;
+			prim.type = Primitive<int>::Type::TRIANGLE;
 			prim.p0 = es[0];
 			prim.p1 = es[1];
 			prim.p2 = es[2];

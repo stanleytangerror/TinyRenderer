@@ -175,7 +175,8 @@ struct input_assembly_stage
 template <typename VertexType>
 struct Primitive
 {
-	enum { POINT, LINE, TRIANGLE } type;
+	enum class Type { POINT, LINE, TRIANGLE } type;
+	enum class DrawMode { POINT, LINE, TRIANGLE } draw_mode;
 	VertexType p0;
 	VertexType p1;
 	VertexType p2;
@@ -184,6 +185,7 @@ struct Primitive
 	Primitive(Primitive &&) = default;
 	Primitive(Primitive const &) = default;
 	Primitive & operator=(Primitive const &) = default;
+
 };
 
 /////////////////////////////////
@@ -321,7 +323,7 @@ public:
 
 	IUINT32 sample(float x, float y, float pixel_len)
 	{
-		if (!m_with_mipmap || pixel_len >= 1.0f)
+		if (!m_with_mipmap || pixel_len <= m_raw_pixel_size)
 			return IUINT32(sample_bilinear(m_pyramid[0], x, y));
 			
 		float len = m_raw_pixel_size;
