@@ -5,7 +5,7 @@
 特性
 ===
 * programmable pipeline，通过C++模板实现vertex shader和fragment shader
-* VS2015 x64下build运行
+* VS2015 x86或x64下build
 * 依赖Eigen 3.2.6
 * 渲染结果输出部分使用[skywind3000/mini3d](https://github.com/skywind3000/mini3d)的device_t和screen部分
 
