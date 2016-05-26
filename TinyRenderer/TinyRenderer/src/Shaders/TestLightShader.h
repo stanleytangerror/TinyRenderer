@@ -10,15 +10,16 @@ struct VSIn;
 struct VSOut;
 struct FSIn;
 struct FSOut;
-typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
+using TestShader = Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut>;
 
 struct VSIn
 {
 	Vec3f normal;
 	//Vec2f texture;
 	Vec3i color;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
+#endif
 	//VSIn(Vec3f normal, Vec3i color, Vec2f texture) :
 	//	normal(normal), color(color), texture(texture) {}
 };
@@ -28,13 +29,14 @@ struct VSOut
 	Vec4f normal;
 	//Vec2f texture;
 	Vec3f color;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct TestUniform
 {
-	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-		
 	Mat4f projection;
 	Mat4f view;
 	Mat4f model;
@@ -54,6 +56,9 @@ struct TestUniform
 		view_pos << 0.0f, 0.0f, 500.0f;
 		light_color << 0.8f, 0.6f, 0.6f;
 	}
+#if defined(WIN32)
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
 };
 
 struct FSIn
@@ -61,7 +66,10 @@ struct FSIn
 	Vec3f color;
 	Vec4f normal;
 	//Vec2f texture_coord;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 
 };
 
@@ -137,8 +145,6 @@ Wrapper<FSOutHeader, FSOut> TestShader::fragment_shader(Wrapper<FSInHeader, FSIn
 
 	return (std::move)(res);
 }
-
-typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
 
 template <>
 struct input_assembly_stage<TestShader, VSIn>

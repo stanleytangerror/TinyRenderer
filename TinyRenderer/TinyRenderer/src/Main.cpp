@@ -1,8 +1,8 @@
 #define USE_MY_MINI3D
 #ifdef USE_MY_MINI3D
 
-#include "Shaders\\TestLightShader.h"
-//#include "Shaders\\TestTextureShader.h"
+//#include "Shaders\\TestLightShader.h"
+#include "Shaders\\TestTextureShader.h"
 #include "Types.h"
 
 #include <Eigen\Dense>
@@ -351,7 +351,7 @@ FragmentTriangleTestResult fragment_triangle_test(int x, int y,
 	int ax, int ay, int bx, int by, int cx, int cy,
 	Vec3f & coord)
 {
-	typedef FragmentTriangleTestResult R;
+	using R = FragmentTriangleTestResult;
 	R result = R::INSIDE;
 	coord[0] = edge_function(x, y, bx, by, cx, cy);
 	coord[1] = edge_function(x, y, cx, cy, ax, ay);

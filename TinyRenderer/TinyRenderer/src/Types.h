@@ -41,8 +41,13 @@ using Mat4d = Eigen::Matrix4d;
 /* NOTE: according to https://eigen.tuxfamily.org/dox/group__TopicStlContainers.html
  * use stl containers with eigen
  */
-template <typename T>
-using vector_with_eigen = std::vector<T, Eigen::aligned_allocator<T> >;
+#if defined(WIN32)
+	template <typename T>
+	using vector_with_eigen = std::vector<T, Eigen::aligned_allocator<T> >;
+#else
+	template <typename T>
+	using vector_with_eigen = std::vector<T>;
+#endif
 
 ///////////////////////////////
 // enumerates
@@ -117,7 +122,10 @@ public:
 	Wrapper(Header && header, Content && content) :
 		header(header), content(content) {}
 
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct VSInHeader
@@ -125,13 +133,19 @@ struct VSInHeader
 	Vec3f position;
 	VSInHeader(Vec3f position) :
 		position(position) {}
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct VSOutHeader
 {
 	Vec4f position;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct FSInHeader
@@ -141,13 +155,19 @@ struct FSInHeader
 	Vec4f frag_coord;
 	float depth = (std::numeric_limits<float>::max)();
 	Vec3f interp_coord;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct FSOutHeader
 {
 	Eigen::Vector4f color;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 template <typename Uniform,
@@ -171,7 +191,10 @@ public:
 private:
 	Uniform m_uniform;
 	bool m_use_gs;
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 
 };
 
@@ -272,7 +295,10 @@ public:
 
 	int const m_width, m_height;
 
+#if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 
 private:
 	std::unique_ptr< Type * []> m_buffer;

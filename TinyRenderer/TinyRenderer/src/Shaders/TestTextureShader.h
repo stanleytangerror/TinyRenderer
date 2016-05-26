@@ -11,12 +11,10 @@ struct VSIn;
 struct VSOut;
 struct FSIn;
 struct FSOut;
-typedef Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut> TestShader;
+using TestShader = Shader<TestUniform, VSIn, VSOut, int, int, FSIn, FSOut>;
 
 struct TestUniform
 {
-	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-		
 	Mat4f projection;
 	Mat4f view;
 	Mat4f model;
@@ -28,7 +26,7 @@ struct TestUniform
 
 	Texture2D texture;
 
-	TestUniform(Mat4f projection, Mat4f view, Mat4f model, Texture2D texture) :
+	TestUniform(Mat4f & projection, Mat4f & view, Mat4f & model, Texture2D & texture) :
 		projection(projection), view(view), model(model), texture(texture)
 	{
 		model_i_t = model.inverse().transpose();
@@ -36,22 +34,37 @@ struct TestUniform
 		view_pos << 0.0f, 0.0f, 500.0f;
 		light_color << 0.8f, 0.6f, 0.6f;
 	}
+#if defined(WIN32)
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
 };
 
 struct VSIn
 {
 	Vec2f texture;
+#if defined(WIN32)
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct VSOut
 {
 	Vec2f texture;
+#if defined(WIN32)
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct FSIn
 {
 	Mat2f derivatives;
 	Vec2f texture_coord;
+#if defined(WIN32)
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+#endif
+
 };
 
 struct FSOut
