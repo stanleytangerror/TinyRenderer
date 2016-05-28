@@ -198,25 +198,36 @@ private:
 
 };
 
-template <typename VertexType> struct Primitive;
+template <typename VertexType, int Dim> class Primitive;
 
 template <typename Shader, typename VSIn>
 struct input_assembly_stage
 {
-	std::tuple<Shader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ();
+	std::tuple<Shader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int, 3>  > > operator() ();
 };
 
 //////////////////////////////////
 // primitives
 //////////////////////////////////
-template <typename IndexType>
-struct Primitive
+
+enum PrimitiveType
 {
-	enum class Type { POINT, LINE, TRIANGLE } type;
-	enum class DrawMode { POINT, LINE, TRIANGLE } draw_mode;
-	IndexType p0;
-	IndexType p1;
-	IndexType p2;
+	ILLEGAL_TYPE = 0,
+	POINT_TYPE = 1, 
+	LINE_TYPE = 2, 
+	TRIANGLE_TYPE = 3,
+	POLYGON_TYPE = 4
+}; 
+
+template <typename IndexType, int Dim>
+class Primitive
+{
+public:
+	enum class DrawMode { POINT, LINE, FILL } n_draw_mode;
+
+	enum { m_type = Dim };
+
+	IndexType m_vertices[Dim];
 
 	Primitive() = default;
 	Primitive(Primitive &&) = default;
@@ -224,6 +235,21 @@ struct Primitive
 	Primitive & operator=(Primitive const &) = default;
 
 };
+
+//template <typename IndexType, int Dim>
+//class Primitive<IndexType, Dim>
+//{
+//	m_type = Type::POLYGON;
+//};
+//
+//template <typename IndexType>
+//Primitive<IndexType, 1>::m_type = Primitive<IndexType, 1>::Type::POINT;
+//
+//template <typename IndexType>
+//Primitive<IndexType, 2>::m_type = Primitive<IndexType, 2>::Type::LINE;
+//
+//template <typename IndexType>
+//Primitive<IndexType, 3>::m_type = Primitive<IndexType, 3>::Type::TRIANGLE;
 
 /////////////////////////////////
 // buffers

@@ -110,7 +110,7 @@ Wrapper<FSOutHeader, FSOut> TestShader::fragment_shader(Wrapper<FSInHeader, FSIn
 template <>
 struct input_assembly_stage<TestShader, VSIn>
 {
-	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ()
+	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int, 4>  > > operator() ()
 	{
 		static float time = 0.4f;
 		time += 0.03f;
@@ -178,18 +178,18 @@ struct input_assembly_stage<TestShader, VSIn>
 			vertices.push_back(std::move(vsin));
 		}
 
-		int ebo[2][3] = {
-			{ 0, 2, 1 },
-			{ 2, 0, 3 } };
+		int ebo[1][4] = {
+			{ 0, 1, 2, 3}
+		};
 
-		std::vector<Primitive<int> > primitives;
+		std::vector<Primitive<int, 4> > primitives;
 		for (auto & es : ebo)
 		{
-			Primitive<int> prim;
-			prim.type = Primitive<int>::Type::TRIANGLE;
-			prim.p0 = es[0];
-			prim.p1 = es[1];
-			prim.p2 = es[2];
+			Primitive<int, 4> prim;
+			prim.m_vertices[0] = es[0];
+			prim.m_vertices[1] = es[1];
+			prim.m_vertices[2] = es[2];
+			prim.m_vertices[3] = es[3];
 			primitives.push_back((std::move)(prim));
 		}
 

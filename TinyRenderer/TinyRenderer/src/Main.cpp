@@ -409,16 +409,17 @@ vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(vector_with_e
 }
 
 template <typename VSOut>
-QuadFragType quad_fragment_rasterize(
+QuadFragType fragment_triangle_test(
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
-	std::vector<Primitive<int> > & primitives, int prim_id, 
+	std::vector<Primitive<int, 4>  > & primitives, int prim_id, 
 	FaceCulling culling, int x, int y, 
+	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
 	FragmentTriangleTestResult & res, Vec3f & barycentric_coordinate)
 {
-	auto & prim = primitives[prim_id];
-	auto & p0 = vsout[prim.p0];
-	auto & p1 = vsout[prim.p1];
-	auto & p2 = vsout[prim.p2];
+	//auto & prim = primitives[prim_id];
+	//auto & p0 = vsout[prim.p0];
+	//auto & p1 = vsout[prim.p1];
+	//auto & p2 = vsout[prim.p2];
 
 	res = fragment_triangle_test(x, y,
 		p0.header.position.x(), p0.header.position.y(),
@@ -438,14 +439,16 @@ QuadFragType quad_fragment_rasterize(
 }
 
 template <typename VSOut, typename FSIn>
-QuadFragType quad_fragment_barycoord_correction_and_depth_test(
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
-	int prim_id, int x, int y, FragmentTriangleTestResult const & res, Vec3f & barycentric_coordinate, float & depth)
+QuadFragType fragment_barycoord_correction_and_depth_test(
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int, 4>  > & primitives,
+	int prim_id, int x, int y,
+	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
+	FragmentTriangleTestResult const & res, Vec3f & barycentric_coordinate, float & depth)
 {
-	auto & prim = primitives[prim_id];
-	auto & p0 = vsout[prim.p0];
-	auto & p1 = vsout[prim.p1];
-	auto & p2 = vsout[prim.p2];
+	//auto & prim = primitives[prim_id];
+	//auto & p0 = vsout[prim.p0];
+	//auto & p1 = vsout[prim.p1];
+	//auto & p2 = vsout[prim.p2];
 
 	float mark = (res == FragmentTriangleTestResult::FRONT) ? 1.0f : -1.0f;
 	barycentric_coordinate = mark * barycentric_coordinate;
@@ -473,8 +476,106 @@ QuadFragType quad_fragment_barycoord_correction_and_depth_test(
 }
 
 template <typename Shader, typename VSOut, typename FSIn>
+void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
+	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout,
+	std::vector<Primitive<int, 4>  > & primitives,
+	FaceCulling culling, int qx, int qy, int prim_id, int vid0, int vid1, int vid2)
+{
+	/* each quad has following properties */
+	static Vec3f barycentric_coordinates[4];
+	static FragmentTriangleTestResult quad_test_results[4];
+	static float depthes[4];
+	static QuadFragType quad_masks[4];
+	static std::pair<int, int> const quad_offsets[4] = {
+		std::pair<int, int>(0, 0),
+		std::pair<int, int>(1, 0),
+		std::pair<int, int>(0, 1),
+		std::pair<int, int>(1, 1) };
+
+	auto & p0 = vsout[vid0];
+	auto & p1 = vsout[vid1];
+	auto & p2 = vsout[vid2];
+
+	/* dealing with each quad */
+	//for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
+	//{
+		/* first phase
+		* skip invalid quad where no fragment lying in the triangle
+		*/
+		bool valid = false;
+		for (int _i = 0; _i < 4; ++_i)
+		{
+			int x = qx + quad_offsets[_i].first;
+			int y = qy + quad_offsets[_i].second;
+			quad_masks[_i] = fragment_triangle_test<VSOut>(vsout, primitives, prim_id, culling,
+				x, y, p0, p1, p2, quad_test_results[_i], barycentric_coordinates[_i]);
+			/* quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} */
+			if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
+		}
+		if (!valid) return;
+
+		/* second phase
+		* correct the barycentric coordinates and run depth test
+		*/
+		valid = false;
+		for (int _i = 0; _i < 4; ++_i)
+		{
+			int x = qx + quad_offsets[_i].first;
+			int y = qy + quad_offsets[_i].second;
+			QuadFragType mask = fragment_barycoord_correction_and_depth_test(fs_ins, vsout, primitives, prim_id,
+				x, y, p0, p1, p2, quad_test_results[_i], barycentric_coordinates[_i], depthes[_i]);
+			/* mask = {RENDER, HELPER_DEPTH_TEST_FAILED}
+			* quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE}
+			*/
+			quad_masks[_i] = (mask == QuadFragType::RENDER) ? quad_masks[_i] : mask;
+			if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
+		}
+		if (!valid) return;
+
+		/* third phase
+		* get texture coordinates and their derivatives (with helper fargment)
+		*/
+		for (int _i = 0; _i < 4; ++_i)
+		{
+			int x = qx + quad_offsets[_i].first;
+			int y = qy + quad_offsets[_i].second;
+			shader.interpolate(fs_ins.coeff_ref(x, y).content, depthes[_i],
+				p0.content, p1.content, p2.content, barycentric_coordinates[_i]);
+		}
+
+		shader.quad_derivative(fs_ins.coeff_ref(qx, qy).content, fs_ins.coeff_ref(qx + 1, qy).content,
+			fs_ins.coeff_ref(qx, qy + 1).content, fs_ins.coeff_ref(qx + 1, qy + 1).content);
+
+		/* fourth phase
+		* construct header of fragment shaders
+		*/
+		for (int _i = 0; _i < 4; ++_i)
+		{
+			int x = qx + quad_offsets[_i].first;
+			int y = qy + quad_offsets[_i].second;
+
+			auto & fsin = fs_ins.coeff_ref(x, y);
+
+			if (quad_masks[_i] != QuadFragType::RENDER)
+			{
+				//fsin.header.prim_id = -1;
+				continue;
+			}
+
+			fsin.header.prim_id = prim_id;
+			fsin.header.point_coord << x, y;
+			fsin.header.depth = depthes[_i];
+			fsin.header.interp_coord = barycentric_coordinates[_i];
+
+		}
+
+	//}
+}
+
+template <typename Shader, typename VSOut, typename FSIn>
 void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int> > & primitives,
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
+	std::vector<Primitive<int, 4>  > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
 {
 
@@ -511,10 +612,19 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	for (int _i = 0; _i < primitives.size(); ++_i)
 	{
 		auto & prim = primitives[_i];
-		if (!clipped[prim.p0] || !clipped[prim.p1] || !clipped[prim.p2])
-			continue;
-		primitives.erase(primitives.begin() + _i);
-		_i -= 1;
+		bool should_erase = true;
+		for (int v : prim.m_vertices)
+		{
+			if (clipped[v])
+				continue;
+			should_erase = false;
+			break;
+		}
+		if (should_erase)
+		{
+			primitives.erase(primitives.begin() + _i);
+			_i -= 1;
+		}
 	}
 
 	std::cout << "to viewport space" << std::endl;
@@ -535,122 +645,112 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	std::cout << "rasterization " << std::endl;
 
 	/* each quad has following properties */
-	static Vec3f barycentric_coordinates[4];
-	static FragmentTriangleTestResult quad_test_results[4];
-	static float depthes[4];
-	static QuadFragType quad_masks[4];
+	//static Vec3f barycentric_coordinates[4];
+	//static FragmentTriangleTestResult quad_test_results[4];
+	//static float depthes[4];
+	//static QuadFragType quad_masks[4];
 
-	static std::pair<int, int> const quad_offsets[4] = { 
-		std::pair<int, int>(0, 0),
-		std::pair<int, int>(1, 0),
-		std::pair<int, int>(0, 1),
-		std::pair<int, int>(1, 1) };
+	//static std::pair<int, int> const quad_offsets[4] = { 
+	//	std::pair<int, int>(0, 0),
+	//	std::pair<int, int>(1, 0),
+	//	std::pair<int, int>(0, 1),
+	//	std::pair<int, int>(1, 1) };
 	/* for each primitive, generate fragment shader input */
 	for (int prim_id = 0; prim_id < primitives.size(); ++prim_id)
 	{
 		auto & prim = primitives[prim_id];
-		auto & p0 = vsout[prim.p0];
-		auto & p1 = vsout[prim.p1];
-		auto & p2 = vsout[prim.p2];
-
-		int minx = (std::min)({ 
-			(std::floor)(p0.header.position.x()),
-			(std::floor)(p1.header.position.x()),
-			(std::floor)(p2.header.position.x()) });
-		int miny = (std::min)({
-			(std::floor)(p0.header.position.y()),
-			(std::floor)(p1.header.position.y()),
-			(std::floor)(p2.header.position.y()) });
-		int maxx = (std::max)({
-			(std::ceil)(p0.header.position.x()),
-			(std::ceil)(p1.header.position.x()),
-			(std::ceil)(p2.header.position.x()) });
-		int maxy = (std::max)({
-			(std::ceil)(p0.header.position.y()),
-			(std::ceil)(p1.header.position.y()),
-			(std::ceil)(p2.header.position.y()) });
-
-		minx = (std::max)(0, (minx % 2 == 0) ? minx : (minx - 1));
-		miny = (std::max)(0, (miny % 2 == 0) ? miny : (miny - 1));
-		maxx = (std::min)(w - 2, (maxx % 2 == 0) ? maxx : (maxx + 1));
-		maxy = (std::min)(h - 2, (maxy % 2 == 0) ? maxy : (maxy + 1));
-
-		/* dealing with each quad */
-		for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
-		{
-			/* first phase 
-			 * skip invalid quad where no fragment lying in the triangle 
-			 */
-			bool valid = false;
-			for (int _i = 0; _i < 4; ++_i)
-			{
-				int x = qx + quad_offsets[_i].first;
-				int y = qy + quad_offsets[_i].second;
-				quad_masks[_i] = quad_fragment_rasterize<VSOut>(vsout, primitives, prim_id, culling,
-					x, y, quad_test_results[_i], barycentric_coordinates[_i]);
-				/* quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} */
-				if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
-				if (quad_masks[_i] == QuadFragType::RENDER)
-					buffer.coeff_ref(x, y) = 255 << 16;
-			}
-			if (!valid) continue;
-
-			/* second phase
-			 * correct the barycentric coordinates and run depth test
-			 */
-			valid = false;
-			for (int _i = 0; _i < 4; ++_i)
-			{
-				int x = qx + quad_offsets[_i].first;
-				int y = qy + quad_offsets[_i].second;
-				QuadFragType mask = quad_fragment_barycoord_correction_and_depth_test(fs_ins, vsout, primitives, prim_id,
-					x, y, quad_test_results[_i], barycentric_coordinates[_i], depthes[_i]);
-				/* mask = {RENDER, HELPER_DEPTH_TEST_FAILED} 
-				 * quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} 
-				 */
-				quad_masks[_i] = (mask == QuadFragType::RENDER) ? quad_masks[_i] : mask;
-				if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
-			}
-			if (!valid) continue;
-
-			/* third phase
-			 * get texture coordinates and their derivatives (with helper fargment)
-			 */
-			for (int _i = 0; _i < 4; ++_i)
-			{
-				int x = qx + quad_offsets[_i].first;
-				int y = qy + quad_offsets[_i].second;
-				shader.interpolate(fs_ins.coeff_ref(x, y).content, depthes[_i],
-					p0.content, p1.content, p2.content, barycentric_coordinates[_i]);
-			}
-
-			shader.quad_derivative(fs_ins.coeff_ref(qx, qy).content, fs_ins.coeff_ref(qx + 1, qy).content,
-				fs_ins.coeff_ref(qx, qy + 1).content, fs_ins.coeff_ref(qx + 1, qy + 1).content);
 			
-			/* fourth phase
-			 * construct header of fragment shaders 
-			 */
-			for (int _i = 0; _i < 4; ++_i)
+		switch (prim.m_type)
+		{
+		case PrimitiveType::TRIANGLE_TYPE:
+		{
+			int vid0 = prim.m_vertices[0];
+			int vid1 = prim.m_vertices[1];
+			int vid2 = prim.m_vertices[2];
+
+			auto & p0 = vsout[vid0];
+			auto & p1 = vsout[vid1];
+			auto & p2 = vsout[vid2];
+
+			int minx = (std::min)({
+				(std::floor)(p0.header.position.x()),
+				(std::floor)(p1.header.position.x()),
+				(std::floor)(p2.header.position.x()) });
+			int miny = (std::min)({
+				(std::floor)(p0.header.position.y()),
+				(std::floor)(p1.header.position.y()),
+				(std::floor)(p2.header.position.y()) });
+			int maxx = (std::max)({
+				(std::ceil)(p0.header.position.x()),
+				(std::ceil)(p1.header.position.x()),
+				(std::ceil)(p2.header.position.x()) });
+			int maxy = (std::max)({
+				(std::ceil)(p0.header.position.y()),
+				(std::ceil)(p1.header.position.y()),
+				(std::ceil)(p2.header.position.y()) });
+
+			minx = (std::max)(0, (minx % 2 == 0) ? minx : (minx - 1));
+			miny = (std::max)(0, (miny % 2 == 0) ? miny : (miny - 1));
+			maxx = (std::min)(w - 2, (maxx % 2 == 0) ? maxx : (maxx + 1));
+			maxy = (std::min)(h - 2, (maxy % 2 == 0) ? maxy : (maxy + 1));
+
+			/* dealing with each quad */
+			for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
 			{
-				int x = qx + quad_offsets[_i].first;
-				int y = qy + quad_offsets[_i].second;
+				quad_rasterize(shader, fs_ins, vsout, primitives, culling, 
+					qx, qy, prim_id, vid0, vid1, vid2);
+			}
+		}
+		break;
+		case PrimitiveType::POLYGON_TYPE:
+		{
+			int vid0 = prim.m_vertices[0];
 
-				auto & fsin = fs_ins.coeff_ref(x, y);
+			for (int _i = 1; _i < prim.m_type - 1; ++_i)
+			{
+				int vid1 = prim.m_vertices[_i];
+				int vid2 = prim.m_vertices[_i + 1];
 
-				if (quad_masks[_i] != QuadFragType::RENDER)
+				auto & p0 = vsout[vid0];
+				auto & p1 = vsout[vid1];
+				auto & p2 = vsout[vid2];
+
+				int minx = (std::min)({
+					(std::floor)(p0.header.position.x()),
+					(std::floor)(p1.header.position.x()),
+					(std::floor)(p2.header.position.x()) });
+				int miny = (std::min)({
+					(std::floor)(p0.header.position.y()),
+					(std::floor)(p1.header.position.y()),
+					(std::floor)(p2.header.position.y()) });
+				int maxx = (std::max)({
+					(std::ceil)(p0.header.position.x()),
+					(std::ceil)(p1.header.position.x()),
+					(std::ceil)(p2.header.position.x()) });
+				int maxy = (std::max)({
+					(std::ceil)(p0.header.position.y()),
+					(std::ceil)(p1.header.position.y()),
+					(std::ceil)(p2.header.position.y()) });
+
+				minx = (std::max)(0, (minx % 2 == 0) ? minx : (minx - 1));
+				miny = (std::max)(0, (miny % 2 == 0) ? miny : (miny - 1));
+				maxx = (std::min)(w - 2, (maxx % 2 == 0) ? maxx : (maxx + 1));
+				maxy = (std::min)(h - 2, (maxy % 2 == 0) ? maxy : (maxy + 1));
+
+				/* dealing with each quad */
+				for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
 				{
-					//fsin.header.prim_id = -1;
-					continue;
+					quad_rasterize(shader, fs_ins, vsout, primitives, culling,
+						qx, qy, prim_id, vid0, vid1, vid2);
 				}
-				
-				fsin.header.prim_id = prim_id;
-				fsin.header.point_coord << x, y;
-				fsin.header.depth = depthes[_i];
-				fsin.header.interp_coord = barycentric_coordinates[_i];
-
 			}
 
 		}
+		break;
+		default:
+			break;
+		}
+
 	}
 
 }
@@ -699,7 +799,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
 	Shader & shader = std::get<0>(vsdata);
 	vector_with_eigen<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
-	std::vector<Primitive<int> > & primitives = std::get<2>(vsdata);
+	std::vector<Primitive<int, 4>  > & primitives = std::get<2>(vsdata);
 	
 	auto & vs_outs = vertex_shader_stage<Shader, VSIn, VSOut>(vs_ins, shader);
 
