@@ -411,7 +411,7 @@ vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(vector_with_e
 template <typename VSOut>
 QuadFragType fragment_triangle_test(
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
-	std::vector<Primitive<int, 4>  > & primitives, int prim_id, 
+	std::vector<Primitive<int>  > & primitives, int prim_id, 
 	FaceCulling culling, int x, int y, 
 	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
 	FragmentTriangleTestResult & res, Vec3f & barycentric_coordinate)
@@ -440,7 +440,7 @@ QuadFragType fragment_triangle_test(
 
 template <typename VSOut, typename FSIn>
 QuadFragType fragment_barycoord_correction_and_depth_test(
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int, 4>  > & primitives,
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, std::vector<Primitive<int>  > & primitives,
 	int prim_id, int x, int y,
 	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
 	FragmentTriangleTestResult const & res, Vec3f & barycentric_coordinate, float & depth)
@@ -478,7 +478,7 @@ QuadFragType fragment_barycoord_correction_and_depth_test(
 template <typename Shader, typename VSOut, typename FSIn>
 void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout,
-	std::vector<Primitive<int, 4>  > & primitives,
+	std::vector<Primitive<int>  > & primitives,
 	FaceCulling culling, int qx, int qy, int prim_id, int vid0, int vid1, int vid2)
 {
 	/* each quad has following properties */
@@ -574,8 +574,8 @@ void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_in
 
 template <typename Shader, typename VSOut, typename FSIn>
 void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
-	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
-	std::vector<Primitive<int, 4>  > & primitives,
+	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut> > & vsout, 
+	std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
 {
 
@@ -596,35 +596,75 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	std::vector<bool> clipped;
 	clipped.reserve(vsout.size());
 
-	std::cout << "clip" << std::endl;
+	std::cout << "clip near plane" << std::endl;
+	/* select clipping vertices */
 	for (auto & v : vsout)
 	{
 		float cliplen = (std::abs)(v.header.position.w());
 		/* to homogeneous clip space */
-		if (v.header.position.x() < -cliplen || v.header.position.x() > cliplen ||
-			v.header.position.y() < -cliplen || v.header.position.y() > cliplen ||
-			v.header.position.z() < -cliplen || v.header.position.z() > cliplen)
+		if (/*v.header.position.x() < -cliplen || v.header.position.x() > cliplen ||
+			v.header.position.y() < -cliplen || v.header.position.y() > cliplen ||*/
+			v.header.position.z() < -cliplen/* || v.header.position.z() > cliplen*/)
 			clipped.push_back(true);
 		else
 			clipped.push_back(false);
 	}
 
-	for (int _i = 0; _i < primitives.size(); ++_i)
+	/* do primitive clipping */
+	for (auto & prim : primitives)
 	{
-		auto & prim = primitives[_i];
-		bool should_erase = true;
-		for (int v : prim.m_vertices)
+		std::vector<int> vertex_indices;
+		Vec4f near_plane_coeff(0.0f, 0.0f, 1.0f, 1.0f);
+		/* for each edge of a primitive */
+		for (int _i = 0; _i < prim.m_vertices.size(); ++_i)
 		{
-			if (clipped[v])
+			int vid0 = prim.m_vertices[_i];
+			int vid1 = prim.m_vertices[((_i == prim.m_vertices.size() - 1) ? 0 : _i + 1)];
+			/* both inside */
+			if (!clipped[vid0] && !clipped[vid1])
+			{
+				vertex_indices.push_back(vid0);
+				vertex_indices.push_back(vid1);
 				continue;
-			should_erase = false;
-			break;
+			}
+			/* both outside */
+			if (clipped[vid0] && clipped[vid1])
+			{
+				//vertex_indices.push_back(vid0);
+				//vertex_indices.push_back(vid1);
+				continue;
+			}
+			if (!clipped[vid0])
+				vertex_indices.push_back(vid0);
+
+			auto & p0 = vsout[vid0];
+			auto & p1 = vsout[vid1];
+			
+			/* p(t) = (p1-p0)*t + p0 */
+			float t_4d = -float(near_plane_coeff.transpose() * p0.header.position) /
+				float(near_plane_coeff.transpose() * (p1.header.position - p0.header.position));
+			
+			Vec4f foot = t_4d * (p1.header.position - p0.header.position) + p0.header.position;
+			float t_3d = interpolation(foot.z() / foot.w(), p0.header.position.z() / p0.header.position.w(), p1.header.position.z() / p1.header.position.w());
+
+			vsout.push_back(Wrapper<VSOutHeader, VSOut>(
+				interpolate((1.0f - t_4d), p0.header, p1.header), interpolate((1.0f - t_4d), p0.content, p1.content)));
+
+			vertex_indices.push_back(vsout.size() - 1);
+
+			if (!clipped[vid1])
+				vertex_indices.push_back(vid1);
 		}
-		if (should_erase)
+
+		prim.m_vertices.clear();
+		for (int _i = 0; _i < vertex_indices.size(); ++_i)
 		{
-			primitives.erase(primitives.begin() + _i);
-			_i -= 1;
+			if (prim.m_vertices.empty() || vertex_indices[_i] != prim.m_vertices.back())
+				prim.m_vertices.push_back(vertex_indices[_i]);
 		}
+		if (!prim.m_vertices.empty() && prim.m_vertices.front() == prim.m_vertices.back())
+			prim.m_vertices.pop_back();
+		prim.m_type = PrimitiveType(bound<int>(prim.m_vertices.size(), 1, 4));
 	}
 
 	std::cout << "to viewport space" << std::endl;
@@ -706,7 +746,7 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 		{
 			int vid0 = prim.m_vertices[0];
 
-			for (int _i = 1; _i < prim.m_type - 1; ++_i)
+			for (int _i = 1; _i < prim.m_vertices.size() - 1; ++_i)
 			{
 				int vid1 = prim.m_vertices[_i];
 				int vid2 = prim.m_vertices[_i + 1];
@@ -799,7 +839,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
 	Shader & shader = std::get<0>(vsdata);
 	vector_with_eigen<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
-	std::vector<Primitive<int, 4>  > & primitives = std::get<2>(vsdata);
+	std::vector<Primitive<int>  > & primitives = std::get<2>(vsdata);
 	
 	auto & vs_outs = vertex_shader_stage<Shader, VSIn, VSOut>(vs_ins, shader);
 

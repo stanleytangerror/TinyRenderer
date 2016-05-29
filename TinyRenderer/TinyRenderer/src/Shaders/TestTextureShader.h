@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <tuple>
+#include <iostream>
 
 struct TestUniform;
 struct VSIn;
@@ -56,6 +57,14 @@ struct VSOut
 #endif
 
 };
+
+VSOut interpolate(float t, VSOut const & vsout0, VSOut const & vsout1)
+{
+	VSOut res;
+	res.texture = t * vsout0.texture + (1 - t) * vsout1.texture;
+	return std::move(res);
+}
+
 
 struct FSIn
 {
@@ -110,10 +119,11 @@ Wrapper<FSOutHeader, FSOut> TestShader::fragment_shader(Wrapper<FSInHeader, FSIn
 template <>
 struct input_assembly_stage<TestShader, VSIn>
 {
-	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int, 4>  > > operator() ()
+	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int>  > > operator() ()
 	{
-		static float time = 0.4f;
+		static float time = 5.2f;
 		time += 0.03f;
+		std::cout << "time " << time << std::endl;
 
 		// abs
 		float n = 1.0f;
@@ -132,7 +142,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		Texture2D texture(256, 256);
 		texture.set_content(std::move(texture_buffer));
 
-		auto & rot3 = rotate_matrix(Vec3f(1.0f, 1.0f, 1.0f), time);
+		auto & rot3 = rotate_matrix(Vec3f(1.0f, 0.0f, 0.0f), time);
 		Mat4f rot4 = Mat4f::Identity();
 		rot4.block<3, 3>(0, 0) = rot3;
 		Mat4f model;
@@ -141,13 +151,13 @@ struct input_assembly_stage<TestShader, VSIn>
 			0.0f, 70.0f, 0.0f, 0.0f,
 			0.0f, 0.0f, 70.0f, 0.0f,
 			0.0f, 0.0f, 0.0f, 1.0f;
-		model = rot4 * model;
+		model = model * rot4;
 
 		Mat4f view;
 		view <<
 			1.0f, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, -200.0f,
+			0.0f, 0.0f, 1.0f, -50.0f,
 			0.0f, 0.0f, 0.0f, 1.0f;
 		Mat4f projection;
 		projection <<
@@ -159,10 +169,10 @@ struct input_assembly_stage<TestShader, VSIn>
 		TestUniform uniform(projection, view, model, texture);
 
 		float positions[4][3] = {
-			{ -1.0f, -1.0f, -1.0f },
-			{ -1.0f, -1.0f, 1.0f },
-			{ 1.0f, -1.0f, 1.0f },
-			{ 1.0f, -1.0f, -1.0f } };
+			{ -1.0f, 0.0f, -1.0f },
+			{ -1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, 1.0f },
+			{ 1.0f, 0.0f, -1.0f } };
 
 		float uvs[4][2] = {
 			{ 0.0f, 0.0f },
@@ -182,14 +192,13 @@ struct input_assembly_stage<TestShader, VSIn>
 			{ 0, 1, 2, 3}
 		};
 
-		std::vector<Primitive<int, 4> > primitives;
+		std::vector<Primitive<int> > primitives;
 		for (auto & es : ebo)
 		{
-			Primitive<int, 4> prim;
-			prim.m_vertices[0] = es[0];
-			prim.m_vertices[1] = es[1];
-			prim.m_vertices[2] = es[2];
-			prim.m_vertices[3] = es[3];
+			Primitive<int> prim;
+			prim.m_type = PrimitiveType::POLYGON_TYPE;
+			for (auto vid : es)
+				prim.m_vertices.push_back(vid);
 			primitives.push_back((std::move)(prim));
 		}
 

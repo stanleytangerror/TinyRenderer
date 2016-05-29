@@ -148,6 +148,14 @@ struct VSOutHeader
 
 };
 
+VSOutHeader interpolate(float t, VSOutHeader const & out0, VSOutHeader const & out1)
+{
+	VSOutHeader res;
+	res.position = t * out0.position + (1 - t) * out1.position;
+	return std::move(res);
+}
+
+
 struct FSInHeader
 {
 	int prim_id = -1;
@@ -198,12 +206,12 @@ private:
 
 };
 
-template <typename VertexType, int Dim> class Primitive;
+template <typename VertexType> class Primitive;
 
 template <typename Shader, typename VSIn>
 struct input_assembly_stage
 {
-	std::tuple<Shader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int, 3>  > > operator() ();
+	std::tuple<Shader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int>  > > operator() ();
 };
 
 //////////////////////////////////
@@ -219,15 +227,15 @@ enum PrimitiveType
 	POLYGON_TYPE = 4
 }; 
 
-template <typename IndexType, int Dim>
+template <typename IndexType>
 class Primitive
 {
 public:
 	enum class DrawMode { POINT, LINE, FILL } n_draw_mode;
 
-	enum { m_type = Dim };
+	PrimitiveType m_type;
 
-	IndexType m_vertices[Dim];
+	std::vector<IndexType> m_vertices;
 
 	Primitive() = default;
 	Primitive(Primitive &&) = default;

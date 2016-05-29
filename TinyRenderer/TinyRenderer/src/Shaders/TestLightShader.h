@@ -246,7 +246,6 @@ struct input_assembly_stage<TestShader, VSIn>
 		for (auto & es : ebo)
 		{
 			Primitive<int, 3>  prim;
-			prim.m_type = PrimitiveType::TRIANGLE;
 			prim.m_vertices[0] = es[0];
 			prim.m_vertices[1] = es[1];
 			prim.m_vertices[2] = es[2];
