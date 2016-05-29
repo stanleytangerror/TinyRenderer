@@ -148,7 +148,7 @@ struct VSOutHeader
 
 };
 
-VSOutHeader interpolate(float t, VSOutHeader const & out0, VSOutHeader const & out1)
+inline VSOutHeader interpolate(float t, VSOutHeader const & out0, VSOutHeader const & out1)
 {
 	VSOutHeader res;
 	res.position = t * out0.position + (1 - t) * out1.position;
@@ -270,10 +270,10 @@ public:
 	Buffer2D(int width, int height) :
 		m_width(width), m_height(height),
 		m_data(new Type[m_height * m_width]),
-		m_buffer(new Type*[m_width])
+		m_buffer(new Type*[m_height])
 	{
-		for (int _j = 0; _j < m_width; ++_j)
-			m_buffer[_j] = &(m_data[_j * m_height]);
+		for (int _j = 0; _j < m_height; ++_j)
+			m_buffer[_j] = &(m_data[_j * m_width]);
 	}
 
 	Buffer2D() = delete;
@@ -281,10 +281,10 @@ public:
 	Buffer2D(Buffer2D const & other) :
 		m_width(other.m_width), m_height(other.m_height),
 		m_data(new Type[m_height * m_width]),
-		m_buffer(new Type*[m_width])
+		m_buffer(new Type*[m_height])
 	{
-		for (int _j = 0; _j < m_width; ++_j)
-			m_buffer[_j] = &(m_data[_j * m_height]);
+		for (int _j = 0; _j < m_height; ++_j)
+			m_buffer[_j] = &(m_data[_j * m_width]);
 		size_t s = m_height * m_width * sizeof(Type);
 		memcpy_s(m_data.get(), s, other.m_data.get(), s);
 	}
@@ -323,8 +323,13 @@ public:
 
 	void clear(std::function<Type(int, int)> coordinate_map)
 	{
-		for (int x = 0; x < m_width; ++x) for (int y = 0; y < m_height; ++y)
+		for (int y = 0; y < m_height; ++y) for (int x = 0; x < m_width; ++x)
 			coeff_ref(x, y) = coordinate_map(x, y);
+	}
+
+	Type const * const * get_raw_buffer() const
+	{
+		return m_buffer.get();
 	}
 
 	int const m_width, m_height;

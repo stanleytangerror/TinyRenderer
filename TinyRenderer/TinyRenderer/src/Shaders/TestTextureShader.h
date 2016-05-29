@@ -58,7 +58,7 @@ struct VSOut
 
 };
 
-VSOut interpolate(float t, VSOut const & vsout0, VSOut const & vsout1)
+inline VSOut interpolate(float t, VSOut const & vsout0, VSOut const & vsout1)
 {
 	VSOut res;
 	res.texture = t * vsout0.texture + (1 - t) * vsout1.texture;
@@ -128,7 +128,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		// abs
 		float n = 1.0f;
 		float f = 300.0f;
-		float r = 1.0f;
+		float r = 1.5f;
 		float t = 1.0f;
 
 		Buffer2D<IUINT32> texture_buffer(256, 256);
@@ -157,7 +157,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		view <<
 			1.0f, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, -50.0f,
+			0.0f, 0.0f, 1.0f, -400.0f,
 			0.0f, 0.0f, 0.0f, 1.0f;
 		Mat4f projection;
 		projection <<

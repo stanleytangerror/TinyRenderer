@@ -21,11 +21,14 @@
   <ItemGroup>
     <ClCompile Include="LegacyCodes.cpp" />
     <ClCompile Include="src\Main.cpp" />
+    <ClCompile Include="src\Utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\RenderStages.h" />
     <ClInclude Include="src\Shaders\TestLightShader.h" />
     <ClInclude Include="src\Shaders\TestTextureShader.h" />
     <ClInclude Include="src\Types.h" />
+    <ClInclude Include="src\Utils.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{17F7D1B4-7961-45F7-AC74-2BFF0DE834E1}</ProjectGuid>

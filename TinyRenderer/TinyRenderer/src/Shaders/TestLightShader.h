@@ -35,6 +35,14 @@ struct VSOut
 
 };
 
+inline VSOut interpolate(float t, VSOut const & out0, VSOut const & out1)
+{
+	VSOut res;
+	res.normal = t * out0.normal + (1.0f - t) * out1.normal;
+	res.color = t * out0.color + (1.0f - t) * out1.color;
+	return std::move(res);
+}
+
 struct TestUniform
 {
 	Mat4f projection;
@@ -149,7 +157,7 @@ Wrapper<FSOutHeader, FSOut> TestShader::fragment_shader(Wrapper<FSInHeader, FSIn
 template <>
 struct input_assembly_stage<TestShader, VSIn>
 {
-	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int, 3>  > > operator() ()
+	std::tuple<TestShader, vector_with_eigen<Wrapper<VSInHeader, VSIn> >, std::vector<Primitive<int> > > operator() ()
 	{
 		static float time = 0.0f;
 		time += 0.03f;
@@ -242,13 +250,13 @@ struct input_assembly_stage<TestShader, VSIn>
 			{ 4, 5, 6 },
 			{ 4, 6, 7 } };
 
-		std::vector<Primitive<int, 3>  > primitives;
+		std::vector<Primitive<int> > primitives;
 		for (auto & es : ebo)
 		{
-			Primitive<int, 3>  prim;
-			prim.m_vertices[0] = es[0];
-			prim.m_vertices[1] = es[1];
-			prim.m_vertices[2] = es[2];
+			Primitive<int> prim;
+			prim.m_type = PrimitiveType::TRIANGLE_TYPE;
+			for (int vid : es)
+				prim.m_vertices.push_back(vid);
 			primitives.push_back((std::move)(prim));
 		}
 
