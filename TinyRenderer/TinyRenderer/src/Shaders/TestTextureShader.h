@@ -127,7 +127,7 @@ struct input_assembly_stage<TestShader, VSIn>
 
 		// abs
 		float n = 1.0f;
-		float f = 300.0f;
+		float f = 1000.0f;
 		float r = 1.5f;
 		float t = 1.0f;
 

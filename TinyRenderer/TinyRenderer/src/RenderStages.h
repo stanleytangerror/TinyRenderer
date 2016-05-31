@@ -211,6 +211,7 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
 {
+	enum class ClipState { INSIDE, TOO_CLOSE, TOO_FAR };
 
 	static int w = buffer.m_width;
 	static int h = buffer.m_height;
@@ -226,21 +227,23 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 		0.0f, 0.0f, 0.5f, 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f;
 
-	std::vector<bool> clipped;
+	std::vector<ClipState> clipped;
 	clipped.reserve(vsout.size());
 
 	std::cout << "clip near plane" << std::endl;
-	/* select clipping vertices */
+	/* select clipping vertices 
+	 * clip near and far clipping plane 
+	 */
 	for (auto & v : vsout)
 	{
 		float cliplen = (std::abs)(v.header.position.w());
 		/* to homogeneous clip space */
-		if (/*v.header.position.x() < -cliplen || v.header.position.x() > cliplen ||
-			v.header.position.y() < -cliplen || v.header.position.y() > cliplen ||*/
-			v.header.position.z() < -cliplen/* || v.header.position.z() > cliplen*/)
-			clipped.push_back(true);
+		if (v.header.position.z() < -cliplen)
+			clipped.push_back(ClipState::TOO_CLOSE);
+		else if (v.header.position.z() > cliplen)
+			clipped.push_back(ClipState::TOO_FAR);
 		else
-			clipped.push_back(false);
+			clipped.push_back(ClipState::INSIDE);
 	}
 
 	/* do primitive clipping */
@@ -248,52 +251,80 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	{
 		std::vector<int> vertex_indices;
 		Vec4f near_plane_coeff(0.0f, 0.0f, 1.0f, 1.0f);
+		Vec4f far_plane_coeff(0.0f, 0.0f, -1.0f, 1.0f);
 		/* for each edge of a primitive */
 		for (int _i = 0; _i < prim.m_vertices.size(); ++_i)
 		{
 			int vid0 = prim.m_vertices[_i];
 			int vid1 = prim.m_vertices[((_i == prim.m_vertices.size() - 1) ? 0 : _i + 1)];
 			/* both inside */
-			if (!clipped[vid0] && !clipped[vid1])
+			if (clipped[vid0] == ClipState::INSIDE && clipped[vid1] == ClipState::INSIDE)
 			{
 				vertex_indices.push_back(vid0);
 				vertex_indices.push_back(vid1);
 				continue;
 			}
-			/* both outside */
-			if (clipped[vid0] && clipped[vid1])
+			/* both too close or too far */
+			if (clipped[vid0] != ClipState::INSIDE && clipped[vid1] != ClipState::INSIDE && clipped[vid0] == clipped[vid1])
 			{
-				//vertex_indices.push_back(vid0);
-				//vertex_indices.push_back(vid1);
 				continue;
 			}
-			if (!clipped[vid0])
-				vertex_indices.push_back(vid0);
 
 			auto & p0 = vsout[vid0];
 			auto & p1 = vsout[vid1];
+			float t_4d = 0.0f;
+
+			/* check vid0 side */
+			if (clipped[vid0] == ClipState::INSIDE)
+			{
+				vertex_indices.push_back(vid0);
+			}
+			else
+			{
+				if (clipped[vid0] == ClipState::TOO_CLOSE)
+					t_4d = -float(near_plane_coeff.transpose() * p1.header.position) /
+						float(near_plane_coeff.transpose() * (p0.header.position - p1.header.position));
+				else if (clipped[vid0] == ClipState::TOO_FAR)
+					t_4d = -float(far_plane_coeff.transpose() * p1.header.position) /
+						float(far_plane_coeff.transpose() * (p0.header.position - p1.header.position));
+				/* new vsout in vertex shader's output stream */
+				vsout.push_back(Wrapper<VSOutHeader, VSOut>(
+					interpolate(t_4d, p0.header, p1.header), interpolate(t_4d, p0.content, p1.content)));
+				vertex_indices.push_back(vsout.size() - 1);
+			}
+
+			/* check vid1 side */
+			if (clipped[vid1] == ClipState::INSIDE)
+			{
+				vertex_indices.push_back(vid1);
+			}
+			else
+			{
+				if (clipped[vid1] == ClipState::TOO_CLOSE)
+					t_4d = -float(near_plane_coeff.transpose() * p1.header.position) /
+						float(near_plane_coeff.transpose() * (p0.header.position - p1.header.position));
+				else if (clipped[vid0] == ClipState::TOO_FAR)
+					t_4d = -float(far_plane_coeff.transpose() * p1.header.position) /
+						float(far_plane_coeff.transpose() * (p0.header.position - p1.header.position));
+				/* new vsout in vertex shader's output stream */
+				vsout.push_back(Wrapper<VSOutHeader, VSOut>(
+					interpolate(t_4d, p0.header, p1.header), interpolate(t_4d, p0.content, p1.content)));
+				vertex_indices.push_back(vsout.size() - 1);
+			}
 			
-			/* p(t) = t * p0 + (1 - t) * p1 */
-			float t_4d = -float(near_plane_coeff.transpose() * p1.header.position) /
-				float(near_plane_coeff.transpose() * (p0.header.position - p1.header.position));
-			
-			Vec4f foot = t_4d * p0.header.position + (1.0f - t_4d) * p1.header.position;
 
-			vsout.push_back(Wrapper<VSOutHeader, VSOut>(
-				interpolate(t_4d, p0.header, p1.header), interpolate(t_4d, p0.content, p1.content)));
-
-			vertex_indices.push_back(vsout.size() - 1);
-
-			if (!clipped[vid1])
+			if (clipped[vid1] == ClipState::INSIDE)
 				vertex_indices.push_back(vid1);
 		}
 
 		prim.m_vertices.clear();
 		for (int _i = 0; _i < vertex_indices.size(); ++_i)
 		{
+			/* remove repeated points */
 			if (prim.m_vertices.empty() || vertex_indices[_i] != prim.m_vertices.back())
 				prim.m_vertices.push_back(vertex_indices[_i]);
 		}
+		/* remove repeated start and end point */
 		if (!prim.m_vertices.empty() && prim.m_vertices.front() == prim.m_vertices.back())
 			prim.m_vertices.pop_back();
 		prim.m_type = PrimitiveType(bound<int>(prim.m_vertices.size(), 1, 4));
