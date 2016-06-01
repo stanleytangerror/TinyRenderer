@@ -6,8 +6,8 @@
 /////////////////////////////////
 // pipeline functions
 /////////////////////////////////
-FragmentTriangleTestResult fragment_triangle_test(int x, int y,
-	int ax, int ay, int bx, int by, int cx, int cy,
+FragmentTriangleTestResult fragment_triangle_test(float x, float y,
+	float ax, float ay, float bx, float by, float cx, float cy,
 	Vec3f & coord)
 {
 	using R = FragmentTriangleTestResult;
@@ -58,14 +58,10 @@ template <typename VSOut>
 QuadFragType fragment_triangle_test(
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout, 
 	std::vector<Primitive<int>  > & primitives, int prim_id, 
-	FaceCulling culling, int x, int y, 
+	FaceCulling culling, float x, float y,
 	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
 	FragmentTriangleTestResult & res, Vec3f & barycentric_coordinate)
 {
-	//auto & prim = primitives[prim_id];
-	//auto & p0 = vsout[prim.p0];
-	//auto & p1 = vsout[prim.p1];
-	//auto & p2 = vsout[prim.p2];
 
 	res = fragment_triangle_test(x, y,
 		p0.header.position.x(), p0.header.position.y(),
@@ -117,7 +113,7 @@ QuadFragType fragment_barycoord_correction_and_depth_test(
 }
 
 template <typename Shader, typename VSOut, typename FSIn>
-void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
+void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Buffer2D<float> & msaa,
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout,
 	std::vector<Primitive<int>  > & primitives,
 	FaceCulling culling, int const qx, int const qy, int prim_id, int vid0, int vid1, int vid2)
@@ -129,6 +125,10 @@ void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_in
 	static QuadFragType quad_masks[4];
 	static std::pair<int, int> const quad_offsets[4] = {
 		{0, 0}, {1, 0}, {0, 1}, {1, 1} };
+	/* used for msaa */
+	static std::pair<float, float> const frag_msaa_offset[4] = {
+		{ 0.25f, 0.25f }, { 0.75f, 0.25f }, { 0.25f, 0.75f }, { 0.75f, 0.75f } };
+	static float quad_msaa_val[4];
 
 	auto & p0 = vsout[vid0];
 	auto & p1 = vsout[vid1];
@@ -138,14 +138,25 @@ void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_in
 	* skip invalid quad where no fragment lying in the triangle
 	*/
 	bool valid = false;
-	for (int _i = 0; _i < 4; ++_i)
+	for (int q_f_no = 0; q_f_no < 4; ++q_f_no)
 	{
-		int x = qx + quad_offsets[_i].first;
-		int y = qy + quad_offsets[_i].second;
-		quad_masks[_i] = fragment_triangle_test<VSOut>(vsout, primitives, prim_id, culling,
-			x, y, p0, p1, p2, quad_test_results[_i], barycentric_coordinates[_i]);
-		/* quad_masks[_i] = {RENDER, HELPER_OUT_OF_RANGE} */
-		if (quad_masks[_i] == QuadFragType::RENDER) valid = true;
+		int x = qx + quad_offsets[q_f_no].first;
+		int y = qy + quad_offsets[q_f_no].second;
+		int msaa_count = 0;
+		for (int frag_msaa_no = 0; frag_msaa_no < 4; ++frag_msaa_no)
+		{
+			/* res = {RENDER, HELPER_OUT_OF_RANGE} */
+			QuadFragType res = fragment_triangle_test<VSOut>(vsout, primitives, prim_id, culling,
+				x + frag_msaa_offset[frag_msaa_no].first, y + frag_msaa_offset[frag_msaa_no].second,
+				p0, p1, p2, quad_test_results[q_f_no], barycentric_coordinates[q_f_no]);
+			if (res == QuadFragType::RENDER) msaa_count += 1;
+		}
+		if (msaa_count > 0)
+		{
+			quad_masks[q_f_no] = QuadFragType::RENDER;
+			quad_msaa_val[q_f_no] = float(msaa_count) / 4.0f;
+			valid = true;
+		}
 	}
 	if (!valid) return;
 
@@ -201,12 +212,12 @@ void quad_rasterize(Shader & shader, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_in
 		fsin.header.point_coord << x, y;
 		fsin.header.depth = depthes[_i];
 		fsin.header.interp_coord = barycentric_coordinates[_i];
-
+		msaa.coeff_ref(x, y) = quad_msaa_val[_i];
 	}
 }
 
 template <typename Shader, typename VSOut, typename FSIn>
-void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer,
+void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<float> & msaa,
 	Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut> > & vsout, 
 	std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
@@ -394,7 +405,7 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 			/* dealing with each quad */
 			for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
 			{
-				quad_rasterize(shader, fs_ins, vsout, primitives, culling, 
+				quad_rasterize(shader, fs_ins, msaa, vsout, primitives, culling, 
 					qx, qy, prim_id, vid0, vid1, vid2);
 			}
 		}
@@ -437,7 +448,7 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 				/* dealing with each quad */
 				for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
 				{
-					quad_rasterize(shader, fs_ins, vsout, primitives, culling,
+					quad_rasterize(shader, fs_ins, msaa, vsout, primitives, culling,
 						qx, qy, prim_id, vid0, vid1, vid2);
 				}
 			}
@@ -453,7 +464,8 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 }
 
 template <typename Shader, typename FSIn, typename FSOut>
-void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Shader & shader)
+void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
+	Buffer2D<float> & msaa, Shader & shader)
 {
 	// fragment shader
 	std::cout << "fragment shader" << std::endl;
@@ -464,19 +476,21 @@ void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuf
 			continue;
 
 		Wrapper<FSOutHeader, FSOut> const fsout = shader.fragment_shader(fsin);
+		Vec4f color = fsout.header.color * msaa.coeff_ref(x, y);
 
-		unsigned int r = unsigned int((std::max)(0.0f, fsout.header.color.x() * 256.f - 1.f)) & 0xff;
-		unsigned int g = unsigned int((std::max)(0.0f, fsout.header.color.y() * 256.f - 1.f)) & 0xff;
-		unsigned int b = unsigned int((std::max)(0.0f, fsout.header.color.z() * 256.f - 1.f)) & 0xff;
+		unsigned int r = unsigned int((std::max)(0.0f, color.x() * 256.f - 1.f)) & 0xff;
+		unsigned int g = unsigned int((std::max)(0.0f, color.y() * 256.f - 1.f)) & 0xff;
+		unsigned int b = unsigned int((std::max)(0.0f, color.z() * 256.f - 1.f)) & 0xff;
 
 		buffer.coeff_ref(x, y) = IUINT32((r << 16) | (g << 8) | b);
 	}
 }
 
 template <typename FSIn>
-void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins)
+void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Buffer2D<float> & msaa)
 {
 	fsbuffer.clear(0);
+	msaa.clear(0.0f);
 	for (int y = 0; y < fs_ins.m_height; ++y) for (int x = 0; x < fs_ins.m_width; ++x)
 	{
 		auto & fsin = fs_ins.coeff_ref(x, y);
@@ -495,8 +509,9 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 	static float h = float(buffer.m_height);
 	static Buffer2D<IUINT32> fsbuffer(w, h);
 	static Buffer2D<Wrapper<FSInHeader, FSIn>> fs_ins(w, h);
+	static Buffer2D<float> msaa(w, h);
 
-	clear(buffer, fsbuffer, fs_ins);
+	clear(buffer, fsbuffer, fs_ins, msaa);
 	
 	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
 	Shader & shader = std::get<0>(vsdata);
@@ -507,8 +522,8 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 
 	//auto & primitives = primitive_assembly_stage(ebo);
 
-	rasterize_stage<Shader, VSOut, FSIn>(shader, buffer, fsbuffer, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
-	fragment_shader_stage<Shader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, shader);
+	rasterize_stage<Shader, VSOut, FSIn>(shader, buffer, fsbuffer, msaa, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
+	fragment_shader_stage<Shader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, msaa, shader);
 
 }
 

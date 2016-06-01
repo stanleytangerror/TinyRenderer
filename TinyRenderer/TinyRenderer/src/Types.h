@@ -244,21 +244,6 @@ public:
 
 };
 
-//template <typename IndexType, int Dim>
-//class Primitive<IndexType, Dim>
-//{
-//	m_type = Type::POLYGON;
-//};
-//
-//template <typename IndexType>
-//Primitive<IndexType, 1>::m_type = Primitive<IndexType, 1>::Type::POINT;
-//
-//template <typename IndexType>
-//Primitive<IndexType, 2>::m_type = Primitive<IndexType, 2>::Type::LINE;
-//
-//template <typename IndexType>
-//Primitive<IndexType, 3>::m_type = Primitive<IndexType, 3>::Type::TRIANGLE;
-
 /////////////////////////////////
 // buffers
 /////////////////////////////////
@@ -348,9 +333,10 @@ class GBuffer
 {
 public:
 	size_t const m_width, m_height;
-	Buffer2D<IUINT32> m_z_buffer;
+
+	Buffer2D<IUINT32> m_depth_buffer;
 	Buffer2D<IUINT32> m_stencil_buffer;
-	Buffer2D<IUINT32> m_rgb_buffer;
+	Buffer2D<IUINT32> m_frame_buffer;
 };
 
 //////////////////////////////////////
