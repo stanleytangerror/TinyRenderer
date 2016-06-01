@@ -230,7 +230,8 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 	std::vector<ClipState> clipped;
 	clipped.reserve(vsout.size());
 
-	std::cout << "clip near plane" << std::endl;
+	/* ---------- frustum clipping ---------- */
+	std::cout << "frustum clipping: near and far plane" << std::endl;
 	/* select clipping vertices 
 	 * clip near and far clipping plane 
 	 */
@@ -330,7 +331,8 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 		prim.m_type = PrimitiveType(bound<int>(prim.m_vertices.size(), 1, 4));
 	}
 
-	std::cout << "to viewport space" << std::endl;
+	/* ---------- homogeneous divide ---------- */
+	std::cout << "homogeneous divide" << std::endl;
 	for (auto & v : vsout)
 	{
 		/* projection division, to NDC coordinate */
@@ -338,10 +340,13 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 		v.header.position.x() = v.header.position.x() / v.header.position.w();
 		v.header.position.y() = v.header.position.y() / v.header.position.w();
 		v.header.position.z() = v.header.position.z() / v.header.position.w();
-
-		/* to viewport coordinate */
+	}
+	
+	/* ---------- viewport mapping ---------- */
+	std::cout << "viewport mapping" << std::endl;
+	for (auto & v : vsout)
+	{
 		v.header.position = to_screen * (v.header.position + Vec4f(1.0f, 1.0f, 1.0f, 0.0f));
-
 	}
 
 	// rasterization
