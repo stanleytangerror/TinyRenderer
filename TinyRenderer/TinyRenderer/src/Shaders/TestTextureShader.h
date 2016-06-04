@@ -157,7 +157,7 @@ struct input_assembly_stage<TestShader, VSIn>
 		view <<
 			1.0f, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, -400.0f,
+			0.0f, 0.0f, 1.0f, -100.0f,
 			0.0f, 0.0f, 0.0f, 1.0f;
 		Mat4f projection;
 		projection <<

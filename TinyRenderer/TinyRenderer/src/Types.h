@@ -7,6 +7,9 @@
 #include <memory>
 #include <functional>
 #include <tuple>
+#include <map>
+#include <list>
+#include <queue>
 
 ///////////////////////////////
 // basic types
@@ -53,7 +56,7 @@ using Mat4d = Eigen::Matrix4d;
 // enumerates
 ///////////////////////////////
 
-enum class FragmentTriangleTestResult 
+enum class PositionTriangleTestResult 
 { FRONT, BACK, OUTSIDE, INSIDE };
 
 enum class FaceCulling 
@@ -99,7 +102,7 @@ inline Eigen::Matrix3f rotate_matrix(Vec3f axis, float theta)
 	return q.toRotationMatrix();
 }
 
-inline float edge_function(int ax, int ay, int bx, int by, int cx, int cy)
+inline float edge_function(float ax, float ay, float bx, float by, float cx, float cy)
 {
 	return (cy - ay) * (bx - ax) - (cx - ax) * (by - ay);
 }
@@ -245,6 +248,32 @@ public:
 };
 
 /////////////////////////////////
+// anti-aliasing
+/////////////////////////////////
+
+struct MSAASample
+{
+	float percent;
+	float depth;
+	int prim_id;
+
+	struct Cmp
+	{
+		bool operator () (MSAASample const & a, MSAASample const & b) 
+		{
+			return a.depth < b.depth;
+		}
+	};
+};
+
+struct MSAA_4
+{
+	using queue = std::priority_queue<MSAASample, std::vector<MSAASample>, MSAASample::Cmp>;
+	queue samples[4];
+	int const sample_num = 4;
+};
+
+/////////////////////////////////
 // buffers
 /////////////////////////////////
 
@@ -252,6 +281,8 @@ template <typename Type>
 class Buffer2D
 {
 public:
+	int const m_width, m_height;
+	
 	Buffer2D(int width, int height) :
 		m_width(width), m_height(height),
 		m_data(new Type[m_height * m_width]),
@@ -306,18 +337,16 @@ public:
 			m_data[_i] = val;
 	}
 
-	void clear(std::function<Type(int, int)> coordinate_map)
+	void clear(std::function<void(int, int, Type &)> coordinate_map)
 	{
 		for (int y = 0; y < m_height; ++y) for (int x = 0; x < m_width; ++x)
-			coeff_ref(x, y) = coordinate_map(x, y);
+			coordinate_map(x, y, coeff_ref(x, y));
 	}
 
 	Type const * const * get_raw_buffer() const
 	{
 		return m_buffer.get();
 	}
-
-	int const m_width, m_height;
 
 #if defined(WIN32)
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -334,9 +363,55 @@ class GBuffer
 public:
 	size_t const m_width, m_height;
 
-	Buffer2D<IUINT32> m_depth_buffer;
+	Buffer2D<float> m_depth_buffer;
 	Buffer2D<IUINT32> m_stencil_buffer;
 	Buffer2D<IUINT32> m_frame_buffer;
+};
+
+
+//////////////////////////////////////
+// maps
+//////////////////////////////////////
+template <typename Type, class Container = vector_with_eigen<Type> >
+class Storage2D
+{
+public:
+	size_t const m_width, m_height;
+
+	Storage2D(int width, int height) :
+		m_width(width), m_height(height),
+		m_storage(std::map<std::pair<int, int>, Container>())
+	{}
+
+	void insert(int x, int y, Type && type, std::function<void(Container &, Type &&)> const & pusher)
+	{
+		pusher(coeff_ref(x, y), std::move(type));
+	}
+
+	Container & coeff_ref(int x, int y)
+	{
+		if (!(x >= 0 && x < m_width && y >= 0 && y < m_height))
+		{
+			std::cout << "coordinate overflow" << std::endl;
+		}
+		std::pair<int, int> const & pair = { x, y };
+		if (m_storage.find(pair) == m_storage.end())
+		{
+			m_storage[pair] = Container();
+		}
+		return m_storage.at({ x, y });
+	}
+
+	void clear(std::function<void(int, int, Container &)> coordinate_map)
+	{
+		for (int y = 0; y < m_height; ++y) for (int x = 0; x < m_width; ++x)
+			coordinate_map(x, y, coeff_ref(x, y));
+	}
+
+
+private:
+	std::map<std::pair<int, int>, Container> m_storage;
+
 };
 
 //////////////////////////////////////
