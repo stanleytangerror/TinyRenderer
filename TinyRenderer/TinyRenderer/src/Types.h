@@ -382,12 +382,22 @@ public:
 
 	Storage2D(int width, int height) :
 		m_width(width), m_height(height),
-		m_storage(std::map<std::pair<int, int>, Container>())
-	{}
+		m_storage(std::vector<std::unique_ptr<Container> >())
+	{
+		int reserve = m_height * m_width;
+		m_storage.reserve(reserve);
+		for (int _i = 0; _i < reserve; ++_i)
+			m_storage.push_back(std::unique_ptr<Container>(new Container()));
+	}
 
 	void insert(int x, int y, Type && type, std::function<void(Container &, Type &&)> const & pusher)
 	{
 		pusher(coeff_ref(x, y), std::move(type));
+	}
+
+	void insert(int x, int y, Type && type)
+	{
+		coeff_ref(x, y).push_back(std::move(type));
 	}
 
 	Container & coeff_ref(int x, int y)
@@ -396,12 +406,8 @@ public:
 		{
 			std::cout << "coordinate overflow" << std::endl;
 		}
-		std::pair<int, int> const & pair = { x, y };
-		if (m_storage.find(pair) == m_storage.end())
-		{
-			m_storage[pair] = Container();
-		}
-		return m_storage.at({ x, y });
+		int idx = x + y * m_width;
+		return *(m_storage.at(idx).get());
 	}
 
 	void clear(std::function<void(int, int, Container &)> coordinate_map)
@@ -412,7 +418,7 @@ public:
 
 
 private:
-	std::map<std::pair<int, int>, Container> m_storage;
+	std::vector<std::unique_ptr<Container> > m_storage;
 
 };
 

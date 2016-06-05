@@ -244,7 +244,7 @@ void quad_rasterize(Shader & shader, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_i
 		fsin.header.interp_coord = barycentric_coordinates[_i];
 
 		//std::cout << "insert (" << x << ", " << y << ") prim_id " << prim_id << std::endl;
-		fs_ins.insert(x, y, std::move(fsin), [](auto & list, auto && fsin) { list.push_back(fsin); });
+		fs_ins.insert(x, y, std::move(fsin));
 	}
 
 }
