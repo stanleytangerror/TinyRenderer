@@ -477,10 +477,8 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 			quad_rasterize(shader, fs_ins, msaa, vsout, primitives, culling,
 				qx, qy, prim_id, vid0, vid1, vid2);
 		}
-
-
+		
 	}
-
 }
 
 template <typename Shader, typename FSIn, typename FSOut>
@@ -492,6 +490,7 @@ void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuf
 	std::cout << "fragment shader" << std::endl;
 	for (int y = 0; y < fsbuffer.m_height; ++y) for (int x = 0; x < fsbuffer.m_width; ++x)
 	{
+		bool draw_frag = false;
 		prim_ids.clear();
 
 		auto & fsin_list = fs_ins.coeff_ref(x, y);
@@ -505,7 +504,10 @@ void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuf
 			if (prim_ids.find(sample.prim_id) == prim_ids.end())
 				prim_ids[sample.prim_id] = 0.0f;
 			prim_ids.at(sample.prim_id) += sample.percent;
+			draw_frag = true;
 		}
+
+		if (!draw_frag) continue;
 
 		Vec4f color = Vec4f::Zero();
 		for (auto id_percent : prim_ids)
@@ -532,17 +534,24 @@ template <typename FSIn>
 void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<Wrapper<FSInHeader, FSIn> > & fs_ins, 
 	Buffer2D<MSAA_4> & msaa)
 {
+	buffer.clear([](int x, int y, IUINT32 & val)
+	{
+		y = y / 4;
+		val = IUINT32((y << 16) | (y << 8) | y);
+	});
+	
 	fsbuffer.clear(0);
+	
 	msaa.clear([](int x, int y, MSAA_4 & msaa_4)
 	{
 		for (int _i = 0; _i < msaa_4.sample_num; ++_i)
 			msaa_4.samples[_i] = MSAA_4::queue();
 	});
-	for (int y = 0; y < fs_ins.m_height; ++y) for (int x = 0; x < fs_ins.m_width; ++x)
+	
+	fs_ins.clear([](int x, int y, vector_with_eigen<Wrapper<FSInHeader, FSIn> > & container)
 	{
-		auto & fsin = fs_ins.coeff_ref(x, y);
-		fsin.clear();
-	}
+		container.clear();
+	});
 }
 
 template <typename Shader, typename VSIn, typename VSOut, typename FSIn, typename FSOut>

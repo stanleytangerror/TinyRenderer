@@ -251,11 +251,6 @@ void flush_buffer(device_t & device, Buffer2D<IUINT32> & buffer)
 	{
 		device.framebuffer[y][x] = buffer.coeff(x, buffer.m_height - y - 1);
 	}
-	buffer.clear([](int x, int y, IUINT32 & val)
-	{
-		y = y / 4;
-		val = IUINT32((y << 16) | (y << 8) | y);
-	});
 }
 
 int main()
