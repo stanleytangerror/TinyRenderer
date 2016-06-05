@@ -114,7 +114,7 @@ QuadFragType fragment_barycoord_correction(
 }
 
 template <typename Shader, typename VSOut, typename FSIn>
-void quad_rasterize(Shader & shader, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Buffer2D<MSAA_4> & msaa,
+void quad_rasterize(Shader & shader, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Buffer2D<MSAA<4>> & msaa,
 	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout,
 	std::vector<Primitive<int> > & primitives,
 	FaceCulling culling, int const qx, int const qy, int prim_id, int vid0, int vid1, int vid2)
@@ -250,7 +250,7 @@ void quad_rasterize(Shader & shader, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_i
 }
 
 template <typename Shader, typename VSOut, typename FSIn>
-void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<MSAA_4> & msaa,
+void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<MSAA<4>> & msaa,
 	Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut> > & vsout, 
 	std::vector<Primitive<int> > & primitives,
 	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
@@ -483,7 +483,7 @@ void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT
 
 template <typename Shader, typename FSIn, typename FSOut>
 void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
-	Buffer2D<MSAA_4> & msaa, Shader & shader)
+	Buffer2D<MSAA<4>> & msaa, Shader & shader)
 {
 	static std::map<int, float> prim_ids;
 	// fragment shader
@@ -500,7 +500,7 @@ void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuf
 		{
 			if (msaa_samples.samples[frag_msaa_no].empty()) continue;
 
-			auto & sample = msaa_samples.samples[frag_msaa_no].top();
+			auto & sample = msaa_samples.samples[frag_msaa_no].get_max();
 			if (prim_ids.find(sample.prim_id) == prim_ids.end())
 				prim_ids[sample.prim_id] = 0.0f;
 			prim_ids.at(sample.prim_id) += sample.percent;
@@ -532,7 +532,7 @@ void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuf
 
 template <typename FSIn>
 void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<Wrapper<FSInHeader, FSIn> > & fs_ins, 
-	Buffer2D<MSAA_4> & msaa)
+	Buffer2D<MSAA<4>> & msaa)
 {
 	buffer.clear([](int x, int y, IUINT32 & val)
 	{
@@ -542,10 +542,10 @@ void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<W
 	
 	fsbuffer.clear(0);
 	
-	msaa.clear([](int x, int y, MSAA_4 & msaa_4)
+	msaa.clear([](int x, int y, MSAA<4> & msaa_4)
 	{
 		for (int _i = 0; _i < msaa_4.sample_num; ++_i)
-			msaa_4.samples[_i] = MSAA_4::queue();
+			msaa_4.samples[_i].clear();
 	});
 	
 	fs_ins.clear([](int x, int y, vector_with_eigen<Wrapper<FSInHeader, FSIn> > & container)
@@ -562,7 +562,7 @@ void pipeline(Buffer2D<IUINT32> & buffer)
 	static Buffer2D<IUINT32> fsbuffer(w, h);
 
 	static Storage2D<Wrapper<FSInHeader, FSIn>> fs_ins(w, h);
-	static Buffer2D<MSAA_4> msaa(w, h);
+	static Buffer2D<MSAA<4>> msaa(w, h);
 
 	clear(buffer, fsbuffer, fs_ins, msaa);
 	

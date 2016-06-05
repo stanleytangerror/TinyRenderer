@@ -251,26 +251,89 @@ public:
 // anti-aliasing
 /////////////////////////////////
 
+template <typename Type>
+class MaxVector
+{
+public:
+	MaxVector() :
+		m_max_index(-1)	{}
+
+	Type const & get_max() const
+	{
+		return m_container.at(m_max_index);
+	}
+
+	void push(Type && obj)
+	{
+		/* judge first for std::move(obj) disabled obj */
+		if (m_container.empty() || get_max() < obj)
+		{
+			m_max_index = m_container.size();
+		}
+		m_container.push_back(std::move(obj));
+	}
+
+	void pop()
+	{
+		if (m_container.empty()) 
+			return;
+		if (m_container.size() == 1)
+		{
+			m_max_index = -1;
+			m_container.pop_back();
+			return;
+		}
+
+		if (m_max_index == m_container.size() - 1)
+		{
+			(std::swap)(m_container[m_max_index - 1], m_container[m_max_index]);
+			--m_max_index;
+		}
+		m_container.pop_back();
+	}
+
+	void reserve(size_t size)
+	{
+		m_container.reserve(size);
+	}
+
+	bool empty()
+	{
+		return m_container.empty();
+	}
+
+	void clear()
+	{
+		m_max_index = -1;
+		m_container.clear();
+	}
+
+private:
+	int m_max_index;
+	std::vector<Type> m_container;
+};
+
 struct MSAASample
 {
 	float percent;
 	float depth;
 	int prim_id;
 
-	struct Cmp
+	bool operator< (/*MSAASample const & a, */MSAASample const & b) const
 	{
-		bool operator () (MSAASample const & a, MSAASample const & b) 
-		{
-			return a.depth < b.depth;
-		}
-	};
+		return this->depth < b.depth;
+	}
+
 };
 
-struct MSAA_4
+
+
+template <int Time>
+struct MSAA
 {
-	using queue = std::priority_queue<MSAASample, std::vector<MSAASample>, MSAASample::Cmp>;
-	queue samples[4];
-	int const sample_num = 4;
+	//using queue = std::priority_queue<MSAASample, std::vector<MSAASample>, MSAASample::Cmp>;
+	MaxVector<MSAASample> samples[Time];
+	enum { sample_num = Time };
 };
 
 /////////////////////////////////
