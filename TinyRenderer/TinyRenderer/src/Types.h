@@ -348,8 +348,8 @@ public:
 	
 	Buffer2D(int width, int height) :
 		m_width(width), m_height(height),
-		m_data(new Type[m_height * m_width]),
-		m_buffer(new Type*[m_height])
+		m_data(new Type[height * width]),
+		m_buffer(new Type*[height])
 	{
 		for (int _j = 0; _j < m_height; ++_j)
 			m_buffer[_j] = &(m_data[_j * m_width]);
@@ -359,8 +359,8 @@ public:
 
 	Buffer2D(Buffer2D const & other) :
 		m_width(other.m_width), m_height(other.m_height),
-		m_data(new Type[m_height * m_width]),
-		m_buffer(new Type*[m_height])
+		m_data(new Type[other.m_height * other.m_width]),
+		m_buffer(new Type*[other.m_height])
 	{
 		for (int _j = 0; _j < m_height; ++_j)
 			m_buffer[_j] = &(m_data[_j * m_width]);
