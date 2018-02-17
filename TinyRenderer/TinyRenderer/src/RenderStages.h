@@ -1,583 +1,389 @@
 #ifndef RENDER_STAGES_H
 #define RENDER_STAGES_H
 
-#include "Types.h"
-#include <set>
+#include "Utils.h"
+#include <Eigen\Core>
+#include <algorithm>
+#include <queue>
+#include <vector>
+#include <array>
 
-/////////////////////////////////
-// pipeline functions
-/////////////////////////////////
-PositionTriangleTestResult position_triangle_test(float x, float y,
-	float ax, float ay, float bx, float by, float cx, float cy,
-	Vec3f & coord)
+inline float edge_equation(Vec2f const & p, Vec2f const & v1, Vec2f const & v2)
 {
-	using R = PositionTriangleTestResult;
-	R result = R::INSIDE;
-	coord[0] = edge_function(x, y, bx, by, cx, cy);
-	coord[1] = edge_function(x, y, cx, cy, ax, ay);
-	coord[2] = edge_function(x, y, ax, ay, bx, by);
-
-	for (int _i = 0; _i < 3; ++_i)
-	{
-		if (coord[_i] > 0.0f)
-		{
-			switch (result)
-			{
-			case R::INSIDE: result = R::FRONT; break;
-			case R::BACK: result = R::OUTSIDE; break;
-			default: break;
-			}
-		}
-		else if (coord[_i] < 0.0f)
-		{
-			switch (result)
-			{
-			case R::INSIDE: result = R::BACK; break;
-			case R::FRONT: result = R::OUTSIDE; break;
-			default: break;
-			}
-		}
-		if (result == R::OUTSIDE)
-			break;
-	}
-	return result;
+	return (p.y() - v2.y()) * (v1.x() - v2.x()) - (p.x() - v2.x()) * (v1.y() - v2.y());
 }
 
-template <typename Shader, typename VSIn, typename VSOut>
-vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vertex_shader_stage(vector_with_eigen<Wrapper<VSInHeader, VSIn>> & vertices, Shader & shader)
+inline bool top_left(Vec2f const & v1, Vec2f const & v2)
 {
-	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> vsout;
-	for (auto & v : vertices)
-	{
-		auto vso = shader.vertex_shader(v);
-		vsout.push_back(vso);
-	}
-	return std::move(vsout);
+	return (v1.x() <= v2.x()) && (v1.y() <= v2.y());
 }
 
-template <typename VSOut>
-QuadFragType fragment_triangle_test(
-	FaceCulling culling, 
-	float x, float y,
-	Wrapper<VSOutHeader, VSOut> const & p0, 
-	Wrapper<VSOutHeader, VSOut> const & p1, 
-	Wrapper<VSOutHeader, VSOut> const & p2,
-	PositionTriangleTestResult & sided, 
-	Vec3f & barycentric_coordinate)
+inline Vec3f proj_correct(Vec3f bary, Vec3f const & inv_vertex_w, float inv_frag_w)
 {
+	auto frag_w = 1.0f / inv_frag_w;
+	bary.x() *= inv_vertex_w.x() * frag_w;
+	bary.y() *= inv_vertex_w.y() * frag_w;
+	bary.z() *= inv_vertex_w.z() * frag_w;
+	return bary;
+}
 
-	sided = position_triangle_test(x, y,
-		p0.header.position.x(), p0.header.position.y(),
-		p1.header.position.x(), p1.header.position.y(),
-		p2.header.position.x(), p2.header.position.y(),
-		barycentric_coordinate);
+template<class T>
+constexpr T clamp(const T& v, const T& lo, const T& hi)
+{
+	return (v <= lo ? lo : (v <= hi ? v : hi));
+}
 
-	if (sided == PositionTriangleTestResult::OUTSIDE ||
-		sided == PositionTriangleTestResult::INSIDE)
-		return QuadFragType::HELPER_OUT_OF_RANGE;
+/////////////////////////////////
+// pipeline
+/////////////////////////////////
 
-	if (culling == FaceCulling::FRONT && sided == PositionTriangleTestResult::BACK)
-		return QuadFragType::HELPER_OUT_OF_RANGE;
+template <
+	typename VertexShader, typename FragmentShader, typename Uniform, 
+	typename VSIn, typename VSOut, typename FSIn, typename FSOut
+>
+class RenderPipeline
+{
+private:
+	int const m_width;
+	int const m_height;
 
-	return QuadFragType::RENDER;
+	float const eps = 1e-20f;
+
+	std::vector<VSIn> m_vertex_attri_buffer;
+	std::vector<int> m_vertex_element_buffer;
+
+	std::vector<VSOut> m_post_vs_buffer;
+	std::vector<VSOut> m_post_clip_buffer;
+	std::vector<int> m_post_clip_element_buffer;
+
+	//Buffer2D<FSOut> m_per_frag_queue_buffer;
+	//Buffer2D<int> m_per_frag_mark;
 	
-}
+	Buffer2D<Vec4f> m_framebuffer;
+	Buffer2D<float> m_depth_buffer;
 
-template <typename VSOut>
-QuadFragType fragment_barycoord_correction(
-	Wrapper<VSOutHeader, VSOut> const & p0, Wrapper<VSOutHeader, VSOut> const & p1, Wrapper<VSOutHeader, VSOut> const & p2,
-	PositionTriangleTestResult const & res, Vec3f & barycentric_coordinate, float & depth)
-{
-	float mark = (res == PositionTriangleTestResult::FRONT) ? 1.0f : -1.0f;
-	barycentric_coordinate = mark * barycentric_coordinate;
-	barycentric_coordinate = barycentric_coordinate /
-		(barycentric_coordinate.x() + barycentric_coordinate.y() + barycentric_coordinate.z());
+public:
+	RenderPipeline(int width, int height):
+		m_width(width + width % 2), m_height(height + height % 2),
+		//m_per_frag_mark(m_width, m_height),
+		//m_per_frag_queue_buffer(m_width, m_height),
+		m_framebuffer(m_width, m_height),
+		m_depth_buffer(m_width, m_height)
+	{}
 
-	float inv_depth0 = 1.0f / p0.header.position.w();
-	float inv_depth1 = 1.0f / p1.header.position.w();
-	float inv_depth2 = 1.0f / p2.header.position.w();
-
-	barycentric_coordinate.x() = barycentric_coordinate.x() * inv_depth0;
-	barycentric_coordinate.y() = barycentric_coordinate.y() * inv_depth1;
-	barycentric_coordinate.z() = barycentric_coordinate.z() * inv_depth2;
-
-	float inv_depth = barycentric_coordinate[0] +
-		barycentric_coordinate[1] + barycentric_coordinate[2];
-
-	depth = 1.0f / inv_depth;
-
-	///* depth test */
-	//if (fs_ins.coeff_ref(x, y).header.prim_id >= 0 && depth >= fs_ins.coeff_ref(x, y).header.depth)
-	//	return QuadFragType::HELPER_DEPTH_TEST_FAILED;
-
-	return QuadFragType::RENDER;
-}
-
-template <typename Shader, typename VSOut, typename FSIn>
-void quad_rasterize(Shader & shader, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, Buffer2D<MSAA<4>> & msaa,
-	vector_with_eigen<Wrapper<VSOutHeader, VSOut>> & vsout,
-	std::vector<Primitive<int> > & primitives,
-	FaceCulling culling, int const qx, int const qy, int prim_id, int vid0, int vid1, int vid2)
-{
-	static std::pair<int, int> const quad_offsets[4] = {
-		{ 0, 0 },{ 1, 0 },{ 0, 1 },{ 1, 1 } };
-
-	auto & p0 = vsout[vid0];
-	auto & p1 = vsout[vid1];
-	auto & p2 = vsout[vid2];
-
-	/* ---------- generate msaa barycentric coordinate and depth ---------- */
-
-	/* used for msaa */
-	static std::pair<float, float> const frag_msaa_offset[4] = {
-		{ 0.25f, 0.25f }, { 0.75f, 0.25f }, { 0.25f, 0.75f }, { 0.75f, 0.75f } };
-	static QuadFragType quad_masks[4];
-	struct MSAA_DATA
+	void clear_pipeline(Vec4f color)
 	{
-		Vec3f msaa_barycentric_coordinates[4];
-		float msaa_depthes[4];
-		QuadFragType msaa_masks[4];
-		PositionTriangleTestResult msaa_test_results[4];
-	};
-	static MSAA_DATA frag_msaa_data[4];
+		m_post_vs_buffer.clear();
+		m_post_clip_buffer.clear();
+		m_post_clip_element_buffer.clear();
 
-	/* first phase
-	* skip invalid quad where no fragment lying in the triangle
-	*/
-	bool valid = false;
-	for (int _i = 0; _i < 4; ++_i)
+		//m_per_frag_mark.clear(0);
+		//m_per_frag_queue_buffer.clear(FSOut{ 1.0f, color });
+		m_framebuffer.clear(Vec4f::Zero());
+		m_depth_buffer.clear(1.0f);
+	}
+
+	void input_assembly_stage(std::vector<VSIn> const & inputs, std::vector<int> const & elements)
 	{
-		int x = qx + quad_offsets[_i].first;
-		int y = qy + quad_offsets[_i].second;
-		auto & frag_msaa_datum = frag_msaa_data[_i];
-		for (int frag_msaa_no = 0; frag_msaa_no < 4; ++frag_msaa_no)
+		m_vertex_attri_buffer = inputs;
+		m_vertex_element_buffer = elements;
+	}
+
+	void vertex_shading_stage(Uniform const & uni) 
+	{
+		for (auto const & vsin : m_vertex_attri_buffer)
+			m_post_vs_buffer.push_back(VertexShader()(vsin, uni));
+	}
+
+	void primitive_assembly_stage()
+	{
+		/* clip */
+		for (int i = 0; i < m_vertex_element_buffer.size() / 3; ++i)
+			clip_primitive(i);
+		/* cull */
+
+	}
+	
+	void rasterization_stage_and_fragment_shading_stage_post_process_stage(Uniform const & uni, MSAA msaa)
+	{
+		/* projection divide and viewport transform */
+		for (auto & vsout : m_post_clip_buffer)
+			projection_divide_and_view_port_transform(vsout);
+
+		/* rasterize primitive */
+		for (int i = 0; i < m_post_clip_element_buffer.size() / 3; ++i)
+			rasterize_triangle_and_fragment_shading_and_post_process(
+				m_post_clip_buffer[m_post_clip_element_buffer[i * 3]],
+				m_post_clip_buffer[m_post_clip_element_buffer[i * 3 + 1]],
+				m_post_clip_buffer[m_post_clip_element_buffer[i * 3 + 2]],
+				uni, msaa);
+	}
+
+	Buffer2D<Vec4f> const & render(std::vector<VSIn> const & inputs, std::vector<int> const & elements, 
+		Uniform const & uni, MSAA msaa)
+	{
+		input_assembly_stage(inputs, elements);
+		vertex_shading_stage(uni);
+		primitive_assembly_stage();
+		rasterization_stage_and_fragment_shading_stage_post_process_stage(uni, msaa);
+
+		return m_framebuffer;
+	}
+
+private:
+	void clip_primitive(size_t prim_id)
+	{
+		bool need_last = false;
+		std::vector<VSOut> post_clip_prim_buffer;
+		for (int eid = 0; eid < 3; ++eid) /* for each triangle edge */
 		{
-			/* res = {RENDER, HELPER_OUT_OF_RANGE} */
-			frag_msaa_datum.msaa_masks[frag_msaa_no] = fragment_triangle_test(
-				culling,
-				float(x) + frag_msaa_offset[frag_msaa_no].first, float(y) + frag_msaa_offset[frag_msaa_no].second,
-				p0, p1, p2, 
-				frag_msaa_datum.msaa_test_results[frag_msaa_no], frag_msaa_datum.msaa_barycentric_coordinates[frag_msaa_no]);
-			if (frag_msaa_datum.msaa_masks[frag_msaa_no] == QuadFragType::RENDER)
+			auto const & v0 = m_post_vs_buffer[m_vertex_element_buffer[prim_id * 3 + eid % 3]];
+			auto const & v1 = m_post_vs_buffer[m_vertex_element_buffer[prim_id * 3 + (eid + 1) % 3]];
+
+			auto const & vp0 = v0.gl_Position;
+			auto const & vp1 = v1.gl_Position;
+
+			/* insert vertex */
+			std::vector<float> interp_vertex_t;
+			//interp_vertex_t.push_back(0.0f);
+			/* w = z */
+			float det = (vp1.z() - vp0.z()) - (vp1.w() - vp0.w());
+			if (std::abs(det) > eps)
 			{
-				quad_masks[_i] = QuadFragType::RENDER;
-				valid = true;
+				auto tmp = (vp0.w() - vp0.z()) / det;
+				if (0.0f < tmp && tmp < 1.0f) interp_vertex_t.push_back(tmp);
+			}
+			/* w = -z */
+			det = (vp1.z() - vp0.z()) + (vp1.w() - vp0.w());
+			if (std::abs(det) > eps)
+			{
+				auto tmp = (-vp0.w() - vp0.z()) / det;
+				if (0.0f < tmp && tmp < 1.0f) interp_vertex_t.push_back(tmp);
+			}
+			if (interp_vertex_t.size() == 2 && interp_vertex_t[0] > interp_vertex_t[1])
+				std::swap(interp_vertex_t[0], interp_vertex_t[1]);
+			//interp_vertex_t.push_back(1.0f);
+
+			auto between_near_and_far = [](Vec4f const p) { return std::abs(p.w()) > std::abs(p.z()); };
+			if (between_near_and_far(vp0)) 
+				post_clip_prim_buffer.push_back(v0);
+			for (auto t : interp_vertex_t)
+			{
+				post_clip_prim_buffer.push_back(lerp(v0, v1, t));
 			}
 		}
-	}
-	if (!valid) return;
 
-	/* second phase
-	* correct the msaa barycentric coordinates
-	*/
-	for (int _i = 0; _i < 4; ++_i)
-	{
-		int x = qx + quad_offsets[_i].first;
-		int y = qy + quad_offsets[_i].second;
-		auto & frag_msaa_datum = frag_msaa_data[_i];
-		for (int frag_msaa_no = 0; frag_msaa_no < 4; ++frag_msaa_no)
+		if (post_clip_prim_buffer.size() < 3) return;
+
+		int start_id = m_post_clip_buffer.size();
+		m_post_clip_buffer.insert(m_post_clip_buffer.end(), 
+			post_clip_prim_buffer.begin(), post_clip_prim_buffer.end());
+		int end_id = m_post_clip_buffer.size() - 1;
+
+		for (int i = start_id + 1; i < end_id; ++i)
 		{
-			if (frag_msaa_datum.msaa_masks[frag_msaa_no] != QuadFragType::RENDER) continue;
+			m_post_clip_element_buffer.push_back(start_id);
+			m_post_clip_element_buffer.push_back(i);
+			m_post_clip_element_buffer.push_back(i + 1);
+		}
 
-			fragment_barycoord_correction(
-				p0, p1, p2,
-				frag_msaa_datum.msaa_test_results[frag_msaa_no],
-				frag_msaa_datum.msaa_barycentric_coordinates[frag_msaa_no],
-				frag_msaa_datum.msaa_depthes[frag_msaa_no]);
-			
-			MSAASample sample;
-			sample.percent = 0.25f;
-			sample.depth = frag_msaa_datum.msaa_depthes[frag_msaa_no];
-			sample.prim_id = prim_id;
+	}
+
+	void projection_divide_and_view_port_transform(VSOut & vsout)
+	{
+		auto tmp = 1.0f / vsout.gl_Position.w();
+		vsout.gl_Position.x() *= tmp;
+		vsout.gl_Position.y() *= tmp;
+		vsout.gl_Position.z() *= tmp;
+		vsout.gl_Position.x() = vsout.gl_Position.x() * (m_width / 2) + m_width / 2;
+		vsout.gl_Position.y() = vsout.gl_Position.y() * (m_height / 2) + m_height / 2;
+	}
+
+	void rasterize_triangle_and_fragment_shading_and_post_process(
+		VSOut const & vsout0, VSOut const & vsout1, VSOut const & vsout2, Uniform const & uni, MSAA aa_mode)
+	{
+		auto v0 = vsout0.gl_Position, v1 = vsout1.gl_Position, v2 = vsout2.gl_Position;
 		
-			msaa.coeff_ref(x, y).samples[frag_msaa_no].push(std::move(sample));
-		}
-	}
+		Vec2f sv0 = { v0.x(), v0.y() }, sv1 = { v1.x(), v1.y() }, sv2 = { v2.x(), v2.y() };
+		Vec3f inv_vertex_w = { 1.0f / v0.w(), 1.0f / v1.w(), 1.0f / v2.w() };
 
-	/* ---------- generate centric sample coordinate and depth ---------- */
+		float x1 = sv0.x(), x2 = sv1.x(), x3 = sv2.x();
+		float y1 = sv0.y(), y2 = sv1.y(), y3 = sv2.y();
 
-	/* each quad has following properties */
-	static Vec3f barycentric_coordinates[4];
-	static PositionTriangleTestResult quad_test_results[4];
-	static float depthes[4];
+		int minx = (std::max)(0, int(std::floor((std::min)(x1, (std::min)(x2, x3)))));
+		int miny = (std::max)(0, int(std::floor((std::min)(y1, (std::min)(y2, y3)))));
+		int maxx = (std::min)(m_width - 1, int(std::ceil((std::max)(x1, (std::max)(x2, x3)))));
+		int maxy = (std::min)(m_height - 1, int(std::ceil((std::max)(y1, (std::max)(y2, y3)))));
 
-	Wrapper<FSInHeader, FSIn> quad_fsin[4];
-	for (int _i = 0; _i < 4; ++_i)
-	{
-		int x = qx + quad_offsets[_i].first;
-		int y = qy + quad_offsets[_i].second;
-		/* get barycentric coordinates (with helper fargment) */
-		fragment_triangle_test(
-			culling,
-			float(x) + 0.5f, float(y) + 0.5f,
-			p0, p1, p2,
-			quad_test_results[_i], barycentric_coordinates[_i]);
-		fragment_barycoord_correction(
-			p0, p1, p2,
-			quad_test_results[_i],
-			barycentric_coordinates[_i],
-			depthes[_i]);
-		/* get texture coordinates and their derivatives (with helper fargment) */
-		shader.interpolate(quad_fsin[_i].content, depthes[_i],
-			p0.content, p1.content, p2.content, barycentric_coordinates[_i]);
-	}
+		if (minx >= maxx || miny >= maxy) return;
 
-	shader.quad_derivative(quad_fsin[0].content, quad_fsin[1].content, 
-		quad_fsin[2].content, quad_fsin[3].content);
-
-	/* construct header of fragment shaders */
-	for (int _i = 0; _i < 4; ++_i)
-	{
-		int x = qx + quad_offsets[_i].first;
-		int y = qy + quad_offsets[_i].second;
-
-		auto & fsin = quad_fsin[_i];
-
-		if (quad_masks[_i] != QuadFragType::RENDER)
+		if ((maxx - minx + 1) % 2 == 1)
 		{
-			continue;
+			if (maxx < m_width - 1) maxx += 1;
+			else minx -= 1;
+		}
+		if ((maxy - miny + 1) % 2 == 1)
+		{
+			if (maxy < m_height - 1) maxy += 1;
+			else miny -= 1;
 		}
 
-		fsin.header.prim_id = prim_id;
-		fsin.header.point_coord << x, y;
-		fsin.header.depth = depthes[_i];
-		fsin.header.interp_coord = barycentric_coordinates[_i];
+		Vec2f line_vec[3];
+		line_vec[0] = sv2 - sv1;
+		line_vec[1] = sv0 - sv2;
+		line_vec[2] = sv1 - sv0;
 
-		//std::cout << "insert (" << x << ", " << y << ") prim_id " << prim_id << std::endl;
-		fs_ins.insert(x, y, std::move(fsin));
-	}
+		bool is_top_left[3];
+		is_top_left[0] = top_left(sv1, sv2);
+		is_top_left[1] = top_left(sv2, sv0);
+		is_top_left[2] = top_left(sv0, sv1);
 
-}
+		Vec2f left_up_corner = { minx + 0.5f, miny + 0.5f };
+		Vec3f left_up_corner_bary = {
+				edge_equation(left_up_corner, sv1, sv2),
+				edge_equation(left_up_corner, sv2, sv0),
+				edge_equation(left_up_corner, sv0, sv1) };
 
-template <typename Shader, typename VSOut, typename FSIn>
-void rasterize_stage(Shader & shader, Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Buffer2D<MSAA<4>> & msaa,
-	Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, vector_with_eigen<Wrapper<VSOutHeader, VSOut> > & vsout, 
-	std::vector<Primitive<int> > & primitives,
-	FaceCulling culling = FaceCulling::FRONT_AND_BACK)
-{
-	enum class ClipState { INSIDE, TOO_CLOSE, TOO_FAR };
-
-	static int w = buffer.m_width;
-	static int h = buffer.m_height;
-	static std::vector<int> primitive_mask;
-	//static Buffer2D<IUINT32> fsbuffer(w, h);
-	//static Storage2D<Wrapper<FSInHeader, FSIn>> fs_ins(w, h);
-
-	fsbuffer.clear(0);
-
-	Mat4f to_screen;
-	to_screen <<
-		w / 2, 0.0f, 0.0f, 0.0f,
-		0.0f, h / 2, 0.0f, 0.0f,
-		0.0f, 0.0f, 0.5f, 0.0f,
-		0.0f, 0.0f, 0.0f, 1.0f;
-
-	std::vector<ClipState> clipped;
-	clipped.reserve(vsout.size());
-
-	/* ---------- frustum clipping ---------- */
-	std::cout << "frustum clipping: near and far plane" << std::endl;
-	/* select clipping vertices 
-	 * clip near and far clipping plane 
-	 */
-	for (auto & v : vsout)
-	{
-		float cliplen = (std::abs)(v.header.position.w());
-		/* to homogeneous clip space */
-		if (v.header.position.z() < -cliplen)
-			clipped.push_back(ClipState::TOO_CLOSE);
-		else if (v.header.position.z() > cliplen)
-			clipped.push_back(ClipState::TOO_FAR);
-		else
-			clipped.push_back(ClipState::INSIDE);
-	}
-
-	/* do primitive clipping */
-	for (auto & prim : primitives)
-	{
-		std::vector<int> vertex_indices;
-		Vec4f near_plane_coeff(0.0f, 0.0f, 1.0f, 1.0f);
-		Vec4f far_plane_coeff(0.0f, 0.0f, -1.0f, 1.0f);
-		/* for each edge of a primitive */
-		for (int _i = 0; _i < prim.m_vertices.size(); ++_i)
+		for (int x = minx; x <= maxx - 1; x += 2) for (int y = miny; y <= maxy - 1; y += 2)
 		{
-			int vid0 = prim.m_vertices[_i];
-			int vid1 = prim.m_vertices[((_i == prim.m_vertices.size() - 1) ? 0 : _i + 1)];
-			/* both inside */
-			if (clipped[vid0] == ClipState::INSIDE && clipped[vid1] == ClipState::INSIDE)
-			{
-				vertex_indices.push_back(vid0);
-				vertex_indices.push_back(vid1);
-				continue;
-			}
-			/* both too close or too far */
-			if (clipped[vid0] != ClipState::INSIDE && clipped[vid1] != ClipState::INSIDE && clipped[vid0] == clipped[vid1])
-			{
-				continue;
-			}
+			QuadOf<Vec3f> quad_bary;
+			QuadOf<float> quad_ratio;
+			QuadOf<bool> quad_need_rast;
 
-			auto & p0 = vsout[vid0];
-			auto & p1 = vsout[vid1];
-			float t_4d = 0.0f;
-
-			/* check vid0 side */
-			if (clipped[vid0] == ClipState::INSIDE)
+			/* compute barycentric coordinates */
+			for (int i = 0; i < 2; ++i) for (int j = 0; j < 2; ++j)
 			{
-				vertex_indices.push_back(vid0);
-			}
-			else
-			{
-				if (clipped[vid0] == ClipState::TOO_CLOSE)
-					t_4d = -float(near_plane_coeff.transpose() * p1.header.position) /
-						float(near_plane_coeff.transpose() * (p0.header.position - p1.header.position));
-				else if (clipped[vid0] == ClipState::TOO_FAR)
-					t_4d = -float(far_plane_coeff.transpose() * p1.header.position) /
-						float(far_plane_coeff.transpose() * (p0.header.position - p1.header.position));
-				/* new vsout in vertex shader's output stream */
-				vsout.push_back(Wrapper<VSOutHeader, VSOut>(
-					interpolate(t_4d, p0.header, p1.header), interpolate(t_4d, p0.content, p1.content)));
-				vertex_indices.push_back(vsout.size() - 1);
-			}
-
-			/* check vid1 side */
-			if (clipped[vid1] == ClipState::INSIDE)
-			{
-				vertex_indices.push_back(vid1);
-			}
-			else
-			{
-				if (clipped[vid1] == ClipState::TOO_CLOSE)
-					t_4d = -float(near_plane_coeff.transpose() * p1.header.position) /
-						float(near_plane_coeff.transpose() * (p0.header.position - p1.header.position));
-				else if (clipped[vid0] == ClipState::TOO_FAR)
-					t_4d = -float(far_plane_coeff.transpose() * p1.header.position) /
-						float(far_plane_coeff.transpose() * (p0.header.position - p1.header.position));
-				/* new vsout in vertex shader's output stream */
-				vsout.push_back(Wrapper<VSOutHeader, VSOut>(
-					interpolate(t_4d, p0.header, p1.header), interpolate(t_4d, p0.content, p1.content)));
-				vertex_indices.push_back(vsout.size() - 1);
-			}
+				auto & bary = quad_bary[i][j];
+				auto & aa_ratio = quad_ratio[i][j]; 
+				bool & need_rast = quad_need_rast[i][j];
 			
+				bary = left_up_corner_bary;
+				aa_ratio = 1.0f;
+				need_rast = true;
 
-			if (clipped[vid1] == ClipState::INSIDE)
-				vertex_indices.push_back(vid1);
-		}
+				int const posx = x + i - minx;
+				int const posy = y + j - miny;
 
-		prim.m_vertices.clear();
-		for (int _i = 0; _i < vertex_indices.size(); ++_i)
-		{
-			/* remove repeated points */
-			if (prim.m_vertices.empty() || vertex_indices[_i] != prim.m_vertices.back())
-				prim.m_vertices.push_back(vertex_indices[_i]);
-		}
-		/* remove repeated start and end point */
-		if (!prim.m_vertices.empty() && prim.m_vertices.front() == prim.m_vertices.back())
-			prim.m_vertices.pop_back();
-		prim.m_type = PrimitiveType(bound<int>(prim.m_vertices.size(), 1, 4));
-	}
+				switch (aa_mode) 
+				{
+				case MSAA::MSAAx4:
+				{
+					static std::array<Vec2f, 4> frag_sample_offset =
+					{ Vec2f{ 0.25f, 0.25f },Vec2f{ 0.25f, -0.25f },Vec2f{ -0.25f, 0.25f },Vec2f{ -0.25f, -0.25f } };
 
-	/* ---------- triangulate ---------- */
-	primitive_mask.clear();
-	int const origin_prim_num = primitives.size();
-	for (int _i = 0; _i < origin_prim_num; ++_i)
-	{
-		/* WARNING: could not have loop invariance
-		 *due to the modification and reallocation during looping 
-		 */
-		switch (primitives[_i].m_type)
-		{
-		case PrimitiveType::TRIANGLE_TYPE:
-		{
-			primitive_mask.push_back(_i);
-		}
-		break;
-		case PrimitiveType::POLYGON_TYPE:
-		{
-			int vid0 = primitives[_i].m_vertices[0];
-			for (int _j = 1; _j < primitives[_i].m_vertices.size() - 1; ++_j)
-			{
-				int vid1 = primitives[_i].m_vertices[_j];
-				int vid2 = primitives[_i].m_vertices[_j + 1];
-				Primitive<int> new_prim;
-				new_prim.m_type = PrimitiveType::TRIANGLE_TYPE;
-				new_prim.m_vertices.push_back(vid0);
-				new_prim.m_vertices.push_back(vid1);
-				new_prim.m_vertices.push_back(vid2);
-				primitives.push_back(new_prim);
-				primitive_mask.push_back(primitives.size() - 1);
-			}
-		}
-		break;
-		default:
-			break;
-		}
+					int sample_inside_cnt = 0;
+					//Vec3f accum_bary = Vec3f::Zero();
+					for (auto const & off : frag_sample_offset)
+					{
+						Vec2f sample_pos = { posx + off.x(), posy + off.y() };
+						Vec3f sample_bary = bary + Vec3f{
+							sample_pos.x() * line_vec[0].y() - sample_pos.y() * line_vec[0].x(),
+							sample_pos.x() * line_vec[1].y() - sample_pos.y() * line_vec[1].x(),
+							sample_pos.x() * line_vec[2].y() - sample_pos.y() * line_vec[2].x()
+						};
+						if ((sample_bary.x() > eps || (std::abs(sample_bary.x()) < eps && is_top_left[0]))
+							&& (sample_bary.y() > eps || (std::abs(sample_bary.y()) < eps && is_top_left[1]))
+							&& (sample_bary.z() > eps || (std::abs(sample_bary.z()) < eps && is_top_left[2])))
+						{
+							sample_inside_cnt += 1;
+						}
+					}
+					aa_ratio = float(sample_inside_cnt) * 0.25f;
+
+					if (sample_inside_cnt > 0)
+						need_rast = true;
+					else
+						need_rast = false;
+
+					//accum_bary /= sample_inside_cnt;
+
+					bary = bary + Vec3f{
+						posx * line_vec[0].y() - posy * line_vec[0].x(),
+						posx * line_vec[1].y() - posy * line_vec[1].x(),
+						posx * line_vec[2].y() - posy * line_vec[2].x()
+					};
+					bary /= bary.x() + bary.y() + bary.z();
 				
-	}
-
-	/* ---------- homogeneous divide ---------- */
-	std::cout << "homogeneous divide" << std::endl;
-	for (auto & v : vsout)
-	{
-		/* projection division, to NDC coordinate */
-		//v.position = v.position / v.position.w();
-		v.header.position.x() = v.header.position.x() / v.header.position.w();
-		v.header.position.y() = v.header.position.y() / v.header.position.w();
-		v.header.position.z() = v.header.position.z() / v.header.position.w();
-	}
-	
-	/* ---------- viewport mapping ---------- */
-	std::cout << "viewport mapping" << std::endl;
-	for (auto & v : vsout)
-	{
-		v.header.position = to_screen * (v.header.position + Vec4f(1.0f, 1.0f, 1.0f, 0.0f));
-	}
-
-	// rasterization
-	std::cout << "rasterization " << std::endl;
-
-	/* for each primitive, generate fragment shader input */
-	for (int prim_id : primitive_mask)
-	{
-		//std::cout << "rasterize " << prim_id << std::endl;
-		auto & prim = primitives[prim_id];
-
-		int vid0 = prim.m_vertices[0];
-		int vid1 = prim.m_vertices[1];
-		int vid2 = prim.m_vertices[2];
-
-		auto & p0 = vsout[vid0];
-		auto & p1 = vsout[vid1];
-		auto & p2 = vsout[vid2];
-
-		int minx = (std::min)({
-			(std::floor)(p0.header.position.x()),
-			(std::floor)(p1.header.position.x()),
-			(std::floor)(p2.header.position.x()) });
-		int miny = (std::min)({
-			(std::floor)(p0.header.position.y()),
-			(std::floor)(p1.header.position.y()),
-			(std::floor)(p2.header.position.y()) });
-		int maxx = (std::max)({
-			(std::ceil)(p0.header.position.x()),
-			(std::ceil)(p1.header.position.x()),
-			(std::ceil)(p2.header.position.x()) });
-		int maxy = (std::max)({
-			(std::ceil)(p0.header.position.y()),
-			(std::ceil)(p1.header.position.y()),
-			(std::ceil)(p2.header.position.y()) });
-
-		minx = (std::max)(0, (minx % 2 == 0) ? minx : (minx - 1));
-		miny = (std::max)(0, (miny % 2 == 0) ? miny : (miny - 1));
-		maxx = (std::min)(w - 2, (maxx % 2 == 0) ? maxx : (maxx + 1));
-		maxy = (std::min)(h - 2, (maxy % 2 == 0) ? maxy : (maxy + 1));
-
-		/* dealing with each quad */
-		for (int qx = minx; qx <= maxx; qx += 2) for (int qy = miny; qy <= maxy; qy += 2)
-		{
-			quad_rasterize(shader, fs_ins, msaa, vsout, primitives, culling,
-				qx, qy, prim_id, vid0, vid1, vid2);
-		}
-		
-	}
-}
-
-template <typename Shader, typename FSIn, typename FSOut>
-void fragment_shader_stage(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<Wrapper<FSInHeader, FSIn>> & fs_ins, 
-	Buffer2D<MSAA<4>> & msaa, Shader & shader)
-{
-	static std::map<int, float> prim_ids;
-	// fragment shader
-	std::cout << "fragment shader" << std::endl;
-	for (int y = 0; y < fsbuffer.m_height; ++y) for (int x = 0; x < fsbuffer.m_width; ++x)
-	{
-		bool draw_frag = false;
-		prim_ids.clear();
-
-		auto & fsin_list = fs_ins.coeff_ref(x, y);
-		auto & msaa_samples = msaa.coeff_ref(x, y);
-		
-		for (int frag_msaa_no = 0; frag_msaa_no < msaa_samples.sample_num; ++frag_msaa_no)
-		{
-			if (msaa_samples.samples[frag_msaa_no].empty()) continue;
-
-			auto & sample = msaa_samples.samples[frag_msaa_no].get_max();
-			if (prim_ids.find(sample.prim_id) == prim_ids.end())
-				prim_ids[sample.prim_id] = 0.0f;
-			prim_ids.at(sample.prim_id) += sample.percent;
-			draw_frag = true;
-		}
-
-		if (!draw_frag) continue;
-
-		Vec4f color = Vec4f::Zero();
-		for (auto id_percent : prim_ids)
-		{
-			for (auto & fsin : fsin_list)
-			{
-				if (fsin.header.prim_id != id_percent.first) continue;
-
-				Wrapper<FSOutHeader, FSOut> const fsout = shader.fragment_shader(fsin);
-				color = color + fsout.header.color * id_percent.second;
+				}
 				break;
+				case MSAA::Standard:
+				{
+					bary = bary + Vec3f{
+						posx * line_vec[0].y() - posy * line_vec[0].x(),
+						posx * line_vec[1].y() - posy * line_vec[1].x(),
+						posx * line_vec[2].y() - posy * line_vec[2].x()
+					};
+
+					if ((bary.x() > eps || (std::abs(bary.x()) < eps && is_top_left[0]))
+						&& (bary.y() > eps || (std::abs(bary.y()) < eps && is_top_left[1]))
+						&& (bary.z() > eps || (std::abs(bary.z()) < eps && is_top_left[2])))
+						need_rast = true;
+					else
+						need_rast = false;
+
+					bary /= bary.x() + bary.y() + bary.z();
+				}
+				break;
+				default:
+					return;
+				}
+			
 			}
+			if (!(quad_need_rast[0][0] || quad_need_rast[1][0] 
+				|| quad_need_rast[0][1] || quad_need_rast[1][1])) continue;
+
+			/* rasterize quad and post process */
+			auto quad_fsout = quad_shading(vsout0, vsout1, vsout2, inv_vertex_w, uni, 
+				quad_need_rast, quad_bary, quad_ratio);
+			quad_post_process(quad_fsout, quad_need_rast, { x, y });
 		}
-		
-		unsigned int r = unsigned int((std::max)(0.0f, color.x() * 256.f - 1.f)) & 0xff;
-		unsigned int g = unsigned int((std::max)(0.0f, color.y() * 256.f - 1.f)) & 0xff;
-		unsigned int b = unsigned int((std::max)(0.0f, color.z() * 256.f - 1.f)) & 0xff;
-
-		buffer.coeff_ref(x, y) = IUINT32((r << 16) | (g << 8) | b);
 	}
-}
 
-template <typename FSIn>
-void clear(Buffer2D<IUINT32> & buffer, Buffer2D<IUINT32> & fsbuffer, Storage2D<Wrapper<FSInHeader, FSIn> > & fs_ins, 
-	Buffer2D<MSAA<4>> & msaa)
-{
-	buffer.clear([](int x, int y, IUINT32 & val)
+	QuadOf<FSOut> quad_shading(VSOut const & vsout0, VSOut const & vsout1, VSOut const & vsout2,
+		Vec3f const & inv_vertex_w, Uniform const & uni, 
+		QuadOf<bool> const & quad_need_rast, QuadOf<Vec3f> const & bary, QuadOf<float> const & aa_ratio) {
+		
+		QuadOf<Vec3f> quad_bary_correct;
+		for (int i = 0; i < 2; ++i) for (int j = 0; j < 2; ++j)
+		{
+			float inv_frag_w = inv_vertex_w.transpose() * bary[i][j];
+			quad_bary_correct[i][j] = proj_correct(bary[i][j], inv_vertex_w, inv_frag_w);
+		}
+		auto quad_fsin = quad_interp(quad_bary_correct, vsout0, vsout1, vsout2);
+		
+		QuadOf<FSOut> res;
+		for (int i = 0; i < 2; ++i) for (int j = 0; j < 2; ++j)
+		{
+			if (quad_need_rast[i][j] == false) continue;
+			res[i][j] = FragmentShader()(quad_fsin[i][j], uni);
+			res[i][j].out_color.w() *= aa_ratio[i][j];
+		}
+		return res;
+	}
+
+	void quad_post_process(QuadOf<FSOut> const & quad_fsout, QuadOf<bool> const & quad_need_rast,
+		Vec2i const & screen_coord)
 	{
-		y = y / 4;
-		val = IUINT32((y << 16) | (y << 8) | y);
-	});
-	
-	fsbuffer.clear(0);
-	
-	msaa.clear([](int x, int y, MSAA<4> & msaa_4)
-	{
-		for (int _i = 0; _i < msaa_4.sample_num; ++_i)
-			msaa_4.samples[_i].clear();
-	});
-	
-	fs_ins.clear([](int x, int y, vector_with_eigen<Wrapper<FSInHeader, FSIn> > & container)
-	{
-		container.clear();
-	});
-}
+		for (int i = 0; i < 2; ++i) for (int j = 0; j < 2; ++j)
+		{
+			if (quad_need_rast[i][j] == false) continue;
+			auto const & fsout = quad_fsout[i][j];
+			int x = screen_coord.x() + i, y = screen_coord.y() + j;
+			
+			//m_framebuffer.coeff(x, y) = fsout.out_color;
 
-template <typename Shader, typename VSIn, typename VSOut, typename FSIn, typename FSOut>
-void pipeline(Buffer2D<IUINT32> & buffer)
-{
-	static float w = float(buffer.m_width);
-	static float h = float(buffer.m_height);
-	static Buffer2D<IUINT32> fsbuffer(w, h);
+			/* late z test */
+			if (m_depth_buffer.coeff(x, y) <= fsout.gl_FragDepth) continue;
+			
+			m_depth_buffer.coeff(x, y) = fsout.gl_FragDepth;
 
-	static Storage2D<Wrapper<FSInHeader, FSIn>> fs_ins(w, h);
-	static Buffer2D<MSAA<4>> msaa(w, h);
+			/* alpha blend */
+			auto const & src = m_framebuffer.coeff(x, y);
+			m_framebuffer.coeff(x, y) = lerp(src, fsout.out_color, fsout.out_color.w());
+			m_framebuffer.coeff(x, y).w() = 1.0f;
+		}
+	}
 
-	clear(buffer, fsbuffer, fs_ins, msaa);
-	
-	auto & vsdata = (input_assembly_stage<Shader, VSIn>())();
-	Shader & shader = std::get<0>(vsdata);
-	vector_with_eigen<Wrapper<VSInHeader, VSIn> > & vs_ins = std::get<1>(vsdata);
-	std::vector<Primitive<int>  > & primitives = std::get<2>(vsdata);
-
-	auto & vs_outs = vertex_shader_stage<Shader, VSIn, VSOut>(vs_ins, shader);
-
-	//auto & primitives = primitive_assembly_stage(ebo);
-
-	rasterize_stage<Shader, VSOut, FSIn>(shader, buffer, fsbuffer, msaa, fs_ins, vs_outs, primitives, FaceCulling::FRONT_AND_BACK);
-	fragment_shader_stage<Shader, FSIn, FSOut>(buffer, fsbuffer, fs_ins, msaa, shader);
-
-}
+};
 
 #endif
